@@ -83,6 +83,9 @@
 
         .hidden { display: none !important; }
 
+        /* 解除コード欄：passwordにせず見た目だけ●にする（ブラウザの「パスワードを保存」表示を避ける） */
+        .code-input { -webkit-text-security: disc; text-security: disc; }
+
         /* ロビー画面 */
         #lobby {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -177,12 +180,6 @@
         }
         @keyframes sweatPop { 0% { transform: scale(0); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
         @keyframes sweatBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.2; } }
-
-        /* 逃走フェードアウト（2.1秒かけて移動＋透明に） */
-        .cat-item.run-away-1 { transform: translate(120vw, -70vh) scale(0.6) rotate(30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
-        .cat-item.run-away-2 { transform: translate(-120vw, -70vh) scale(0.6) rotate(-30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
-        .cat-item.run-away-3 { transform: translate(120vw, 70vh) scale(0.6) rotate(30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
-        .cat-item.run-away-4 { transform: translate(-120vw, 70vh) scale(0.6) rotate(-30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
 
         .cat-bubble {
             background: #ffffff; border: 2px solid var(--border-color); border-radius: 18px;
@@ -297,7 +294,7 @@
         </div>
         <div class="form-group">
             <label>4. 解除コード（数字4桁）</label>
-            <input type="password" id="inCode" placeholder="変更しない場合は「1111」" maxlength="4" pattern="\d{4}">
+            <input type="text" id="inCode" class="code-input" placeholder="変更しない場合は「1111」" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
         </div>
         <div class="form-group">
             <label>5. テーマカラー</label>
@@ -349,8 +346,8 @@
         <div class="modal-content">
             <h3>⚙️ 部屋の設定</h3>
             <p style="font-size:0.8rem; color:#666;">操作には4桁の解除コードが必要です</p>
-            <input type="password" id="modalCode" placeholder="解除コード（4桁）" maxlength="4">
-            
+            <input type="text" id="modalCode" class="code-input" placeholder="解除コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+
             <div style="margin-top:10px; text-align:left;">
                 <label style="font-size:0.8rem; font-weight:bold;">テーマの変更:</label>
                 <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
@@ -405,7 +402,7 @@
 
         let comments = [];
         let roomConfig = { max_cats: 20, fish_limit: 3, code: '1111' };
-        let isAnimating = false; // ★アニメーション中のサーバー通信ガード
+        let isAnimating = false; // アニメーション中のサーバー通信ガード
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
 
@@ -455,7 +452,8 @@
 
             const data = await res.json();
             if (data.status === 'ok') {
-                window.location.href = '?room=' + encodeURIComponent(name);
+                // URLには部屋の名前ではなく、サーバーが作ったランダムなIDを使う
+                window.location.href = '?room=' + encodeURIComponent(data.room_id);
             } else {
                 alert(data.message || "作成に失敗しました。");
             }
@@ -560,11 +558,12 @@
         }
 
         async function fetchComments() {
-            if (!currentRoom || isAnimating) return; // ★通信ガード中はサーバーからデータを取得しない
+            if (!currentRoom || isAnimating) return; // 通信ガード中はサーバーからデータを取得しない
             try {
                 const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=` + Date.now());
                 if (res.ok) {
                     const newComments = await res.json();
+                    if (isAnimating) return; // 通信中にアニメが始まっていたら描画しない
                     if (JSON.stringify(newComments) !== JSON.stringify(comments)) {
                         comments = newComments;
                         renderComments();
@@ -575,11 +574,13 @@
 
         async function saveToServer() {
             if (!currentRoom || isAnimating) return;
-            await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(comments)
-            });
+            try {
+                await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(comments)
+                });
+            } catch (e) {}
         }
 
         function createPopEffect(x, y, iconMark) {
@@ -680,12 +681,60 @@
             saveToServer();
         }
 
+        /* 💦 猫1匹ぶんの「汗 → 0.5秒タメ → 画面外へフェードアウト」エフェクト（全員解散・個別サヨナラ共通） */
+        const fleeDirs = [
+            { x:  1, y: -1, rot:  30 },
+            { x: -1, y: -1, rot: -30 },
+            { x:  1, y:  1, rot:  30 },
+            { x: -1, y:  1, rot: -30 }
+        ];
+
+        function fleeCat(item, idx) {
+            const sweat = document.createElement('div');
+            sweat.className = 'sweat-mark';
+            sweat.textContent = '💦';
+            item.appendChild(sweat);
+            item.style.pointerEvents = 'none'; // ホバー拡大とぶつからないように
+
+            setTimeout(() => {
+                // いまの位置（歩きアニメの途中）を取得してから、歩きを止める
+                const current = getComputedStyle(item).transform;
+                const from = (current === 'none') ? 'translate(0px, 0px)' : current;
+                item.style.animation = 'none';
+
+                const d = fleeDirs[idx % 4];
+                const to = `translate(${d.x * window.innerWidth * 1.2}px, ${d.y * window.innerHeight * 0.7}px) scale(0.6) rotate(${d.rot}deg)`;
+
+                item.animate(
+                    [
+                        { transform: from, opacity: 1 },
+                        { transform: to,   opacity: 0 }
+                    ],
+                    { duration: 2100, easing: 'ease-in', fill: 'forwards' }
+                );
+            }, 500); // 0.5秒汗をかいてから走り出す
+        }
+
+        /* 個別にサヨナラ（確認ウインドウなし・同じエフェクトで逃げる） */
         window.removeCat = function(index) {
-            if (!confirm(`“${comments[index].text}”の猫をバイバイさせますか？`)) return;
-            comments.splice(index, 1);
-            renderComments();
-            updateCatManageList();
-            saveToServer();
+            if (isAnimating) return;
+            const catEl = document.querySelectorAll('.cat-item')[index];
+            if (!catEl) return;
+
+            // 逃げるところが見えるように、設定画面をいったん隠す
+            isAnimating = true;
+            modal.classList.add('hidden');
+            fleeCat(catEl, index);
+
+            // アニメーションが終わる頃（2.6秒後）にデータから消して保存し、設定画面を戻す
+            setTimeout(() => {
+                comments.splice(index, 1);
+                isAnimating = false;
+                renderComments();
+                updateCatManageList();
+                saveToServer();
+                modal.classList.remove('hidden');
+            }, 2600);
         }
 
         document.getElementById('btnSaveCatLimit').addEventListener('click', async () => {
@@ -723,7 +772,7 @@
             }
         });
 
-        /* 💦 解散エフェクト：事前の通信エラーを防ぎつつ、アニメーション完了（3.5秒後）にサーバーへ「clear_cats」通信を送る */
+        /* 💦 猫を解散：汗をかいて0.5秒タメたあと、画面外へ走ってフェードアウト */
         document.getElementById('btnClearCats').addEventListener('click', async () => {
             const code = modalCodeInput.value;
             if (!code) {
@@ -731,40 +780,34 @@
                 return;
             }
 
-            // モーダルを閉じ、通信ガードを【ON】にする（余計な事前エラーを防ぎます）
+            // モーダルを閉じ、通信ガードを【ON】にする
             modal.classList.add('hidden');
-            isAnimating = true; 
-            
-            // 1. 即座に全猫に「💦」をつけてタメ（0.5秒） ＋ 点滅逃走（2.1秒）を再生
-            const catEls = document.querySelectorAll('.cat-item');
-            catEls.forEach((item, idx) => {
-                const sweat = document.createElement('div');
-                sweat.className = 'sweat-mark';
-                sweat.textContent = '💦';
-                item.appendChild(sweat);
+            isAnimating = true;
 
-                const dirClass = `run-away-${(idx % 4) + 1}`;
-                setTimeout(() => {
-                    item.classList.add(dirClass);
-                }, 500); // 0.5秒タメ
-            });
+            // 全員に「汗 → 画面外へフェードアウト」を再生
+            document.querySelectorAll('.cat-item').forEach((item, idx) => fleeCat(item, idx));
 
-            // 2. アニメーションが完全に消え去った 3.5秒後に、サーバーへ「clear_cats」の通信を送る
+            // 3. アニメーションが完全に消えた3.5秒後に、サーバーへ「clear_cats」を送る
             setTimeout(async () => {
-                const res = await fetch('/api/room_action', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code }) // ★サーバーが正しく受け取る action名
-                });
-                const data = await res.json();
+                try {
+                    const res = await fetch('/api/room_action', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code })
+                    });
+                    const data = await res.json();
 
-                if (data.status === 'ok') {
-                    comments = [];
-                    renderComments();
-                } else {
-                    alert(data.message || "解除コードが違います。");
+                    if (data.status === 'ok') {
+                        comments = [];
+                        renderComments();
+                    } else {
+                        alert(data.message || "解除コードが違います。");
+                    }
+                } catch (e) {
+                    alert("通信に失敗しました。もう一度試してください。");
+                } finally {
+                    isAnimating = false; // 通信ガードを【解除】し、同期を再開（失敗しても必ず戻す）
                 }
-                isAnimating = false; // 通信ガードを【解除】し、同期を再開
             }, 3500);
         });
 
