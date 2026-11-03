@@ -86,12 +86,31 @@
         /* 解除コード欄：passwordにせず見た目だけ●にする（ブラウザの「パスワードを保存」表示を避ける） */
         .code-input { -webkit-text-security: disc; text-security: disc; }
 
+        /* 💙 サーバー代のご支援（TOP・ルーム共通：画面の真ん中の下） */
+        .support-box {
+            position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 90; width: max-content; max-width: 94vw; box-sizing: border-box;
+            text-align: center; padding: 6px 14px 8px;
+            background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(6px);
+            border: 2px solid var(--border-color); border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .support-text { font-size: 0.8rem; font-weight: bold; color: var(--header-cat); margin-bottom: 4px; line-height: 1.4; }
+        /* OFUSEの応援ボタン（外部スクリプトを使わず、同じ見た目を自前で作成） */
+        .ofuse-btn {
+            display: inline-block; padding: 7px 22px; border-radius: 999px;
+            border: 2px solid #2a86a8; color: #2a86a8; background: #ffffff;
+            font-size: 0.85rem; font-weight: bold; text-decoration: none; white-space: nowrap;
+            transition: background 0.2s, color 0.2s;
+        }
+        .ofuse-btn:hover, .ofuse-btn:active { background: #2a86a8; color: #ffffff; }
+
         /* ロビー画面 */
         #lobby {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            position: absolute; top: calc(50% - 30px); left: 50%; transform: translate(-50%, -50%);
             background: rgba(255, 255, 255, 0.95); padding: 24px; border-radius: 20px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; width: 90%; max-width: 420px;
-            box-sizing: border-box; max-height: 90vh; overflow-y: auto;
+            box-sizing: border-box; max-height: calc(100vh - 200px); overflow-y: auto;
         }
 
         #lobby h2 { margin-top: 0; color: var(--header-cat); font-size: 1.3rem; }
@@ -163,7 +182,7 @@
             50% { transform: translate(-50%, -8px); }
         }
 
-        #stage { position: absolute; top: 230px; bottom: 0; left: 0; right: 0; overflow: hidden; }
+        #stage { position: absolute; top: 230px; bottom: 104px; left: 0; right: 0; overflow: hidden; }
 
         .cat-item {
             position: absolute; cursor: pointer; user-select: none; z-index: 5;
@@ -196,7 +215,7 @@
         .cat-body-wrap { font-size: 2.8rem; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.12)); }
 
         .fish-badge {
-            position: fixed; bottom: 20px; right: 20px;
+            position: fixed; bottom: 112px; right: 20px;
             background: rgba(255, 255, 255, 0.92); border: 2px solid var(--border-color);
             padding: 8px 16px; border-radius: 20px; font-weight: bold;
             box-shadow: 0 4px 12px rgba(0,0,0,0.12); z-index: 100; font-size: 0.9rem;
@@ -381,6 +400,12 @@
                 <button id="btnCloseModal" style="background:#e5e7eb; color:#333;">閉じる</button>
             </div>
         </div>
+    </div>
+
+    <!-- サーバー代のご支援（TOPページ・ルーム共通、真ん中の下） -->
+    <div class="support-box">
+        <div class="support-text">サーバー代のご支援いただけると、大変たすかりますニャ🐱</div>
+        <a class="ofuse-btn" href="https://ofuse.me/o?uid=231659" target="_blank" rel="noopener noreferrer">💙 OFUSEで応援を送る</a>
     </div>
 
     <script>
