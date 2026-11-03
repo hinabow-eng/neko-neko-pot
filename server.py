@@ -1,11 +1,26 @@
+import secrets
+import string
 from flask import Flask, request, jsonify, send_from_directory
 from datetime import datetime, timedelta
 
 app = Flask(__name__, static_folder='.')
 
 # 部屋ごとにデータを保持する辞書
-# 構造: { "部屋ID": { "info": { "name": ..., "theme": ..., "code": ..., "color": ... }, "cats": [...], "updated_at": datetime } }
+# 構造: { "ランダムな部屋ID": { "info": { "name": ..., "theme": ..., "code": ..., "color": ... }, "cats": [...], "updated_at": datetime } }
 rooms_db = {}
+
+# 部屋IDに使う文字（英大小文字＋数字）
+ROOM_ID_CHARS = string.ascii_letters + string.digits
+
+
+# 推測されにくいランダムな部屋ID（20〜30文字）を作る。既存のIDと重ならないことも確認する
+def generate_room_id():
+    while True:
+        length = secrets.choice(range(20, 31))
+        room_id = ''.join(secrets.choice(ROOM_ID_CHARS) for _ in range(length))
+        if room_id not in rooms_db:
+            return room_id
+
 
 # 48時間以上更新のない部屋をクリーンアップする関数
 def cleanup_old_rooms():
@@ -15,14 +30,16 @@ def cleanup_old_rooms():
         updated_at = data.get('updated_at', now)
         if now - updated_at > timedelta(hours=48):
             expired_rooms.append(room_id)
-    
+
     for room_id in expired_rooms:
         del rooms_db[room_id]
+
 
 @app.route('/')
 def index():
     cleanup_old_rooms()
     return send_from_directory('.', 'index.html')
+
 
 # 部屋情報の取得API
 @app.route('/api/room_info')
@@ -39,6 +56,7 @@ def get_room_info():
         })
     return jsonify({'exists': False})
 
+
 # 部屋の新規作成API
 @app.route('/api/create_room', methods=['POST'])
 def create_room():
@@ -46,12 +64,13 @@ def create_room():
     data = request.get_json()
     if not data or not data.get('name') or not data.get('code'):
         return jsonify({'status': 'error', 'message': '入力項目が不足しています'}), 400
-    
-    room_id = data['name']
-    
+
+    # 部屋の名前は表示用。URLに使うIDはランダムなので、同じ名前の部屋があっても重ならない
+    room_id = generate_room_id()
+
     rooms_db[room_id] = {
         'info': {
-            'name': data['name'],
+            'name': str(data['name'])[:20],
             'theme': data.get('theme', 'みんなの散歩道'),
             'code': str(data['code']),
             'color': data.get('color', 'yellow')
@@ -60,6 +79,7 @@ def create_room():
         'updated_at': datetime.now()
     }
     return jsonify({'status': 'ok', 'room_id': room_id})
+
 
 # 猫（投稿）データの取得API
 @app.route('/data.json')
@@ -70,6 +90,7 @@ def get_data_json():
         return jsonify(rooms_db[room_id]['cats'])
     return jsonify([])
 
+
 # 猫（投稿）データの保存API
 @app.route('/save', methods=['POST'])
 def save_data():
@@ -78,9 +99,10 @@ def save_data():
     data = request.get_json()
     if room_id in rooms_db and data is not None:
         rooms_db[room_id]['cats'] = data
-        rooms_db[room_id]['updated_at'] = datetime.now() # 最終更新時間を更新
+        rooms_db[room_id]['updated_at'] = datetime.now()  # 最終更新時間を更新
         return jsonify({'status': 'ok'})
     return jsonify({'status': 'error'}), 400
+
 
 # 解除コード照合＆アクションAPI（テーマ変更・猫クリア・解散）
 @app.route('/api/room_action', methods=['POST'])
@@ -88,7 +110,7 @@ def room_action():
     cleanup_old_rooms()
     data = request.get_json()
     room_id = data.get('room')
-    action = data.get('action') # 'change_theme', 'clear_cats', 'delete'
+    action = data.get('action')  # 'change_theme', 'clear_cats', 'delete'
     code = str(data.get('code', ''))
 
     if room_id not in rooms_db:
@@ -114,6 +136,7 @@ def room_action():
         return jsonify({'status': 'ok', 'action': 'change_theme', 'new_theme': new_theme})
 
     return jsonify({'status': 'error', 'message': '無効な操作です'}), 400
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
