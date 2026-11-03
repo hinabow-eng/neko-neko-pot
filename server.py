@@ -19,18 +19,15 @@ app = Flask(__name__, static_folder=None)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ------------------------------------------------------------
-# 部屋データの保存先（ファイル）
-# gunicornのワーカーが何個あっても、同じファイルを見るので部屋が消えない。
-# 公開フォルダの外（一時フォルダ）に置くので、URLから直接読まれることもない。
-# 場所を変えたいときは、環境変数 NEKO_DATA_FILE にパスを入れる。
-# ------------------------------------------------------------
+# 部屋データの保存先
 DATA_FILE = os.environ.get('NEKO_DATA_FILE', os.path.join(tempfile.gettempdir(), 'neko_rooms.json'))
 LOCK_FILE = DATA_FILE + '.lock'
 _thread_lock = threading.Lock()
 
-# 部屋IDに使う文字（英大小文字＋数字）
 ROOM_ID_CHARS = string.ascii_letters + string.digits
+ALLOWED_FISH_LIMITS = (1, 3, 5, 7, 10, 999)
+ALLOWED_CAT_LIMITS = (10, 20, 30, 50, 999)
+SECRET_CAT_LIMIT_CODE = '0518'
 
 
 def _now():
@@ -85,7 +82,6 @@ def locked_db():
             lock.close()
 
 
-# 推測されにくいランダムな部屋ID（20〜30文字）を作る
 def generate_room_id(db):
     while True:
         length = secrets.choice(range(20, 31))
@@ -99,7 +95,6 @@ def index():
     return send_from_directory(BASE_DIR, 'index.html')
 
 
-# 部屋情報の取得API
 @app.route('/api/room_info')
 def get_room_info():
     room_id = request.args.get('room', '')
@@ -111,24 +106,23 @@ def get_room_info():
             'name': info['name'],
             'theme': info['theme'],
             'color': info['color'],
-            'fish_limit': info.get('fish_limit', 3)
+            'fish_limit': info.get('fish_limit', 3),
+            'max_cats': info.get('max_cats', 20)
         })
     return jsonify({'exists': False})
 
 
-# 部屋の新規作成API
 @app.route('/api/create_room', methods=['POST'])
 def create_room():
     data = request.get_json(silent=True)
     if not data or not data.get('name') or not data.get('code'):
         return jsonify({'status': 'error', 'message': '入力項目が不足しています'}), 400
 
-    # 1日のおさかな上限（TOPページで選んだ数。999は無限）。想定外の値は標準の3にする
     try:
         fish_limit = int(data.get('fish_limit', 3))
     except (TypeError, ValueError):
         fish_limit = 3
-    if fish_limit not in (1, 3, 5, 7, 10, 999):
+    if fish_limit not in ALLOWED_FISH_LIMITS:
         fish_limit = 3
 
     with locked_db() as db:
@@ -139,7 +133,8 @@ def create_room():
                 'theme': data.get('theme', 'みんなの散歩道'),
                 'code': str(data['code']),
                 'color': data.get('color', 'yellow'),
-                'fish_limit': fish_limit
+                'fish_limit': fish_limit,
+                'max_cats': 20
             },
             'cats': [],
             'updated_at': _now().isoformat()
@@ -147,7 +142,6 @@ def create_room():
     return jsonify({'status': 'ok', 'room_id': room_id})
 
 
-# 猫（投稿）データの取得API
 @app.route('/data.json')
 def get_data_json():
     room_id = request.args.get('room', '')
@@ -157,7 +151,6 @@ def get_data_json():
     return jsonify([])
 
 
-# 猫（投稿）データの保存API
 @app.route('/save', methods=['POST'])
 def save_data():
     room_id = request.args.get('room', '')
@@ -173,23 +166,27 @@ def save_data():
     return jsonify({'status': 'error'}), 400
 
 
-# 解除コード照合＆アクションAPI（テーマ変更・猫クリア・解散）
 @app.route('/api/room_action', methods=['POST'])
 def room_action():
     data = request.get_json(silent=True) or {}
     room_id = data.get('room')
-    action = data.get('action')  # 'change_theme', 'clear_cats', 'delete'
+    action = data.get('action')
     code = str(data.get('code', ''))
 
     with locked_db() as db:
         if room_id not in db:
             return jsonify({'status': 'error', 'message': '部屋が存在しません'}), 404
 
-        # 解除コード判定
-        if db[room_id]['info']['code'] != code:
-            return jsonify({'status': 'error', 'message': '解除コードが正しくありません'}), 403
+        room_info = db[room_id]['info']
 
-        db[room_id]['updated_at'] = _now().isoformat()
+        # 通常操作は部屋ごとの解除コードで照合。
+        # 猫の最大表示数変更だけは、裏設定コード「0518」でも許可する。
+        valid_code = room_info['code'] == code
+        if action == 'change_max_cats' and code == SECRET_CAT_LIMIT_CODE:
+            valid_code = True
+
+        if not valid_code:
+            return jsonify({'status': 'error', 'message': '解除コードが正しくありません'}), 403
 
         if action == 'delete':
             del db[room_id]
@@ -197,12 +194,31 @@ def room_action():
 
         elif action == 'clear_cats':
             db[room_id]['cats'] = []
+            db[room_id]['updated_at'] = _now().isoformat()
             return jsonify({'status': 'ok', 'action': 'clear_cats'})
 
         elif action == 'change_theme':
-            new_theme = data.get('new_theme', '')
-            db[room_id]['info']['theme'] = new_theme
+            new_theme = str(data.get('new_theme', '')).strip()[:30]
+            room_info['theme'] = new_theme
+            db[room_id]['updated_at'] = _now().isoformat()
             return jsonify({'status': 'ok', 'action': 'change_theme', 'new_theme': new_theme})
+
+        elif action == 'change_max_cats':
+            try:
+                new_limit = int(data.get('max_cats', 20))
+            except (TypeError, ValueError):
+                return jsonify({'status': 'error', 'message': '上限数の指定が正しくありません'}), 400
+
+            if new_limit not in ALLOWED_CAT_LIMITS:
+                return jsonify({'status': 'error', 'message': '指定できる上限数ではありません'}), 400
+
+            room_info['max_cats'] = new_limit
+            db[room_id]['updated_at'] = _now().isoformat()
+            return jsonify({
+                'status': 'ok',
+                'action': 'change_max_cats',
+                'max_cats': new_limit
+            })
 
     return jsonify({'status': 'error', 'message': '無効な操作です'}), 400
 
