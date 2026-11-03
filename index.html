@@ -82,11 +82,8 @@
         header .settings-btn:hover { background: rgba(255,255,255,0.4); }
 
         .hidden { display: none !important; }
-
-        /* 解除コード欄：passwordにせず見た目だけ●にする（ブラウザの「パスワードを保存」表示を避ける） */
         .code-input { -webkit-text-security: disc; text-security: disc; }
 
-        /* 💙 サーバー代のご支援（TOP・ルーム共通：画面の真ん中の下） */
         .support-box {
             position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
             z-index: 90; width: max-content; max-width: 94vw; box-sizing: border-box;
@@ -96,7 +93,6 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
         .support-text { font-size: 0.8rem; font-weight: bold; color: var(--header-cat); margin-bottom: 4px; line-height: 1.4; }
-        /* OFUSEの応援ボタン（外部スクリプトを使わず、同じ見た目を自前で作成） */
         .ofuse-btn {
             display: inline-block; padding: 7px 22px; border-radius: 999px;
             border: 2px solid #2a86a8; color: #2a86a8; background: #ffffff;
@@ -105,7 +101,6 @@
         }
         .ofuse-btn:hover, .ofuse-btn:active { background: #2a86a8; color: #ffffff; }
 
-        /* ロビー画面 */
         #lobby {
             position: absolute; top: calc(50% - 30px); left: 50%; transform: translate(-50%, -50%);
             background: rgba(255, 255, 255, 0.95); padding: 24px; border-radius: 20px;
@@ -129,7 +124,6 @@
         }
         #createRoomBtn:hover { background-color: var(--button-hover); }
 
-        /* 広場画面 */
         .post-container {
             position: absolute; top: 50px; left: 0; width: 100%; height: 60px;
             background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(8px);
@@ -148,7 +142,6 @@
             white-space: nowrap; font-size: 0.9rem;
         }
 
-        /* ☁️ ふんわり立体的モクモク雲 */
         .cloud-container {
             position: absolute; top: 125px; left: 50%; transform: translateX(-50%);
             z-index: 2; pointer-events: none; animation: cloudFloat 6s ease-in-out infinite;
@@ -191,7 +184,6 @@
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
-        /* 歩行アニメーションは外側のタップ・ホバー効果と分離する */
         .cat-motion {
             display: flex;
             flex-direction: column;
@@ -201,7 +193,6 @@
         }
         .cat-item:hover { transform: scale(1.15) !important; z-index: 100 !important; }
 
-        /* 💦 汗エフェクト（ポップアップ後、0.4秒間隔で点滅） */
         .cat-body-wrap { position: relative; }
         .sweat-mark {
             position: absolute; top: -8px; right: -18px; font-size: 1.5rem;
@@ -272,7 +263,6 @@
             100% { transform: translate(0px, 0px) rotate(0deg); }
         }
 
-        /* モーダル */
         .modal {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.4); z-index: 2000; display: flex;
@@ -286,7 +276,6 @@
         .modal-btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; }
         .modal-btn-group button { padding: 10px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
 
-        /* 猫管理リスト（設定内） */
         .cat-manage-list { max-height: 160px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; margin: 8px 0; padding: 4px; text-align: left; }
         .cat-manage-item { display: flex; justify-content: space-between; align-items: center; padding: 6px; border-bottom: 1px solid #f3f4f6; font-size: 0.8rem; gap: 6px; }
         .cat-manage-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -300,7 +289,6 @@
         <button id="settingsBtn" class="settings-btn hidden">⚙️ 設定</button>
     </header>
 
-    <!-- ロビー画面 -->
     <div id="lobby">
         <h2>🐾 新しい広場をつくる</h2>
         <div class="form-group">
@@ -340,7 +328,6 @@
         <button id="createRoomBtn">広場へ行く 🐾</button>
     </div>
 
-    <!-- 広場画面 -->
     <div id="roomView" class="hidden">
         <div class="post-container">
             <input type="text" id="commentInput" placeholder="つぶやきを入力..." maxlength="30">
@@ -371,7 +358,6 @@
         <div id="fishBadge" class="fish-badge">🐟 あと <span id="fishRemCount">3</span> 匹</div>
     </div>
 
-    <!-- 設定用モーダル -->
     <div id="settingsModal" class="modal hidden">
         <div class="modal-content">
             <h3>⚙️ 部屋の設定</h3>
@@ -384,7 +370,6 @@
                 <button id="btnChangeTheme" style="width:100%; margin-top:5px; background:#3b82f6; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">テーマを変更する</button>
             </div>
 
-            <!-- 猫の個別管理（固定 / 削除）リスト -->
             <div style="margin-top:12px; text-align:left;">
                 <label style="font-size:0.8rem; font-weight:bold;">🐈 猫の個別管理 (固定・削除):</label>
                 <div id="catManageList" class="cat-manage-list">
@@ -392,7 +377,6 @@
                 </div>
             </div>
 
-            <!-- 裏コマンド「0518」でのみ出現する猫の上限数設定 -->
             <div id="secretCatLimitBox" class="hidden" style="margin-top:12px; text-align:left; background:#fff7ed; padding:10px; border-radius:8px; border:1px solid #fdba74;">
                 <label style="font-size:0.8rem; font-weight:bold; color:#c2410c;">🔒 [裏設定] 猫の最大表示数:</label>
                 <select id="modalCatLimit" style="margin-top:4px;">
@@ -413,7 +397,6 @@
         </div>
     </div>
 
-    <!-- サーバー代のご支援（TOPページ・ルーム共通、真ん中の下） -->
     <div class="support-box">
         <div class="support-text">サーバー代のご支援いただけると、大変たすかりますニャ🐱</div>
         <a class="ofuse-btn" href="https://ofuse.me/o?uid=231659" target="_blank" rel="noopener noreferrer">💙 OFUSEで応援を送る</a>
@@ -438,7 +421,7 @@
 
         let comments = [];
         let roomConfig = { max_cats: 20, fish_limit: 3, code: '1111' };
-        let isAnimating = false; // アニメーション中のサーバー通信ガード
+        let isAnimating = false;
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
 
@@ -470,16 +453,18 @@
             let theme = document.getElementById('inTheme').value.trim();
             let code = document.getElementById('inCode').value.trim();
             let color = document.getElementById('inColor').value;
-            // 「ランダム」のときは、ここで色を1つ選んでからサーバーに送る
+
             if (color === 'random') {
                 const colors = ['yellow', 'mint', 'blue', 'purple', 'pink'];
                 color = colors[Math.floor(Math.random() * colors.length)];
             }
+
             const fishLimit = parseInt(document.getElementById('inFishLimit').value, 10);
 
             if (!name) name = "もふもふ広場";
             if (!theme) theme = randomThemes[Math.floor(Math.random() * randomThemes.length)];
             if (!code) code = "1111";
+
             if (code.length !== 4) {
                 alert("解除コードは4桁の数字で入力してください。");
                 return;
@@ -492,8 +477,8 @@
             });
 
             const data = await res.json();
+
             if (data.status === 'ok') {
-                // URLには部屋の名前ではなく、サーバーが作ったランダムなIDを使う
                 window.location.href = '?room=' + encodeURIComponent(data.room_id);
             } else {
                 alert(data.message || "作成に失敗しました。");
@@ -505,7 +490,6 @@
             const stageWidth = stage.clientWidth || window.innerWidth;
             const stageHeight = stage.clientHeight || 400;
 
-            // 既存の猫をIDで再利用する。同期のたびに全消去・再描画しない。
             const existingCats = new Map(
                 Array.from(stage.querySelectorAll('.cat-item')).map(el => [el.dataset.catKey, el])
             );
@@ -533,11 +517,10 @@
                     const r = Math.floor(index / cols);
                     const randomX = Math.random() * (cellWidth * 0.2) + (cellWidth * 0.05);
                     const randomY = Math.random() * (cellHeight * 0.2) + (cellHeight * 0.05);
+
                     catItem.style.left = (c * cellWidth + randomX) + 'px';
                     catItem.style.top = (r * cellHeight + randomY) + 'px';
 
-                    // タップ時の拡大と歩行アニメーションが同じtransformを奪い合わないよう、
-                    // 歩行は内側の.cat-motionに担当させる。
                     catItem.innerHTML = `
                         <div class="cat-motion">
                             <div class="cat-bubble">
@@ -551,13 +534,10 @@
                     const motion = catItem.querySelector('.cat-motion');
                     const animName = index % 2 === 0 ? 'walkSmooth1' : 'walkSmooth2';
                     const animDuration = 8 + (index % 3) * 2;
-
-                    // 初回だけ全員が同じタイミングで動き始める「ガクッ」を避ける。
-                    // マイナスのdelayで、最初から歩行サイクルの途中に配置する。
                     const phase = Math.random() * animDuration;
+
                     motion.style.animation = `${animName} ${animDuration}s ${-phase}s infinite ease-in-out`;
 
-                    // ハンドラーは一度だけ登録し、最新のcommentsから対象猫を探す。
                     catItem.addEventListener('click', (e) => {
                         const currentIndex = comments.findIndex((c, i) =>
                             String(c.id ?? `legacy-${i}`) === catItem.dataset.catKey
@@ -587,6 +567,7 @@
                         }
 
                         currentItem.likes = (Number(currentItem.likes) || 0) + 1;
+
                         const countEl = catItem.querySelector('.like-count');
                         if (countEl) countEl.textContent = currentItem.likes;
 
@@ -604,7 +585,6 @@
 
                 catItem.dataset.likeIcon = likeIcon;
 
-                // アイコンが変わってもDOM全体を作り直さず、歩行アニメーションを維持。
                 const bubbleText = catItem.querySelector('.bubble-text');
                 const body = catItem.querySelector('.cat-body-wrap');
                 const footer = catItem.querySelector('.bubble-footer');
@@ -613,17 +593,17 @@
                     bubbleText.textContent = pinMark + item.text;
                     bubbleText.title = item.text;
                 }
+
                 if (body && catItem.dataset.icon !== icon) {
                     body.textContent = icon;
                     catItem.dataset.icon = icon;
                 }
+
                 if (footer) {
-                    const countEl = footer.querySelector('.like-count');
                     footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
                 }
             });
 
-            // サーバー側で削除された猫だけ取り除く。
             existingCats.forEach((el, key) => {
                 if (!activeKeys.has(key)) el.remove();
             });
@@ -634,13 +614,16 @@
 
         function updateFishBadgeDisplay() {
             const badge = document.getElementById('fishBadge');
+
             if (roomConfig.fish_limit >= 999) {
                 badge.innerHTML = `🐟 食べ放題 (♾️)`;
                 return;
             }
+
             const today = new Date().toISOString().split('T')[0];
             const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
             let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
+
             if (savedDate !== today) usedFish = 0;
 
             const rem = Math.max(0, roomConfig.fish_limit - usedFish);
@@ -656,12 +639,16 @@
         }
 
         async function fetchComments() {
-            if (!currentRoom || isAnimating) return; // 通信ガード中はサーバーからデータを取得しない
+            if (!currentRoom || isAnimating) return;
+
             try {
                 const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=` + Date.now());
+
                 if (res.ok) {
                     const newComments = await res.json();
-                    if (isAnimating) return; // 通信中にアニメが始まっていたら描画しない
+
+                    if (isAnimating) return;
+
                     if (JSON.stringify(newComments) !== JSON.stringify(comments)) {
                         comments = newComments;
                         renderComments();
@@ -672,6 +659,7 @@
 
         async function saveToServer() {
             if (!currentRoom || isAnimating) return;
+
             try {
                 await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
                     method: 'POST',
@@ -685,7 +673,8 @@
             const effect = document.createElement('div');
             effect.className = 'pop-effect';
             effect.textContent = `+1 ${iconMark}`;
-            effect.style.left = x + 'px'; effect.style.top = y + 'px';
+            effect.style.left = x + 'px';
+            effect.style.top = y + 'px';
             document.body.appendChild(effect);
             setTimeout(() => effect.remove(), 800);
         }
@@ -693,6 +682,7 @@
         function handlePost() {
             const input = document.getElementById('commentInput');
             const rawText = input.value.trim();
+
             if (!rawText) return;
 
             const { cleanText, targetIcon } = parseCommand(rawText);
@@ -706,8 +696,10 @@
             });
 
             const maxAllowed = roomConfig.max_cats || 20;
+
             if (comments.length > maxAllowed) {
                 let removeIdx = comments.findIndex(c => !c.pinned);
+
                 if (removeIdx !== -1) {
                     comments.splice(removeIdx, 1);
                     showToast("古い猫がバイバイしました 🐾");
@@ -730,20 +722,37 @@
         const secretBox = document.getElementById('secretCatLimitBox');
         const catManageList = document.getElementById('catManageList');
 
-        document.getElementById('settingsBtn').addEventListener('click', () => modal.classList.remove('hidden'));
+        // ★今回追加：解除コードの確認関数
+        function isAdminCodeValid() {
+            const code = modalCodeInput.value.trim();
+            return code === String(roomConfig.code || '1111') || code === '0518';
+        }
+
+        document.getElementById('settingsBtn').addEventListener('click', () => {
+            modal.classList.remove('hidden');
+        });
+
         document.getElementById('btnCloseModal').addEventListener('click', () => {
             modal.classList.add('hidden');
             secretBox.classList.add('hidden');
             modalCodeInput.value = '';
-            catManageList.innerHTML = `<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">コードを入れると一覧が出ます</div>`;
+
+            catManageList.innerHTML = `
+                <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                    コードを入れると一覧が出ます
+                </div>`;
         });
 
         modalCodeInput.addEventListener('input', (e) => {
             const code = e.target.value;
-            if (code === roomConfig.code || code === '0518') {
+
+            if (isAdminCodeValid()) {
                 updateCatManageList();
             } else {
-                catManageList.innerHTML = `<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">コードが違います</div>`;
+                catManageList.innerHTML = `
+                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                        コードが違います
+                    </div>`;
             }
 
             if (code === '0518') {
@@ -753,33 +762,65 @@
             }
         });
 
-        /* 猫管理リストの更新（固定切替・個別削除） */
+        /* 猫管理リストの更新（解除コード確認つき） */
         function updateCatManageList() {
-            if (comments.length === 0) {
-                catManageList.innerHTML = `<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">いま猫はいません</div>`;
+
+            // ★今回修正：解除コードが正しくなければ一覧を表示しない
+            if (!isAdminCodeValid()) {
+                catManageList.innerHTML = `
+                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                        解除コードを入力してください
+                    </div>`;
                 return;
             }
+
+            if (comments.length === 0) {
+                catManageList.innerHTML = `
+                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                        いま猫はいません
+                    </div>`;
+                return;
+            }
+
             catManageList.innerHTML = '';
+
             comments.forEach((item, index) => {
                 const div = document.createElement('div');
                 div.className = 'cat-manage-item';
+
                 div.innerHTML = `
                     <span>${item.icon || '🐱'} ${escapeHTML(item.text)}</span>
-                    <button style="background:${item.pinned ? '#10b981' : '#9ca3af'}; color:white;" onclick="togglePin(${index})">${item.pinned ? '固定中' : '通常'}</button>
-                    <button style="background:#ef4444; color:white;" onclick="removeCat(${index})">サヨナラ</button>
+                    <button style="background:${item.pinned ? '#10b981' : '#9ca3af'}; color:white;"
+                        onclick="togglePin(${index})">
+                        ${item.pinned ? '固定中' : '通常'}
+                    </button>
+                    <button style="background:#ef4444; color:white;"
+                        onclick="removeCat(${index})">
+                        サヨナラ
+                    </button>
                 `;
+
                 catManageList.appendChild(div);
             });
         }
 
+        // ★今回修正：固定・解除にも解除コード確認を追加
         window.togglePin = function(index) {
+
+            if (!isAdminCodeValid()) {
+                alert("解除コードが違います。");
+                return;
+            }
+
+            if (index < 0 || index >= comments.length) return;
+
             comments[index].pinned = !comments[index].pinned;
+
             renderComments();
             updateCatManageList();
             saveToServer();
-        }
+        };
 
-        /* 💦 猫1匹ぶんの「汗 → 0.5秒タメ → 画面外へフェードアウト」エフェクト（全員解散・個別サヨナラ共通） */
         const fleeDirs = [
             { x:  1, y: -1, rot:  30 },
             { x: -1, y: -1, rot: -30 },
@@ -791,17 +832,19 @@
             const sweat = document.createElement('div');
             sweat.className = 'sweat-mark';
             sweat.textContent = '💦';
-            // 汗は吹き出しではなく、猫本体の近くに表示する
+
             const catBody = item.querySelector('.cat-body-wrap');
             (catBody || item).appendChild(sweat);
+
             item.style.pointerEvents = 'none';
+
             const motion = item.querySelector('.cat-motion');
             if (motion) motion.style.animationPlayState = 'paused';
 
             setTimeout(() => {
-                // いまの位置（歩きアニメの途中）を取得してから、歩きを止める
                 const current = getComputedStyle(item).transform;
                 const from = (current === 'none') ? 'translate(0px, 0px)' : current;
+
                 item.style.animation = 'none';
 
                 const d = fleeDirs[idx % 4];
@@ -810,44 +853,62 @@
                 item.animate(
                     [
                         { transform: from, opacity: 1 },
-                        { transform: to,   opacity: 0 }
+                        { transform: to, opacity: 0 }
                     ],
                     { duration: 2100, easing: 'ease-in', fill: 'forwards' }
                 );
-            }, 500); // 0.5秒汗をかいてから走り出す
+            }, 500);
         }
 
-        /* 個別にサヨナラ（確認ウインドウなし・同じエフェクトで逃げる） */
+        /* 個別にサヨナラ（解除コード必須） */
         window.removeCat = function(index) {
+
+            // ★今回修正：サヨナラ実行時にも解除コードを確認
+            if (!isAdminCodeValid()) {
+                alert("解除コードが違います。");
+                return;
+            }
+
             if (isAnimating) return;
+
             const catEl = document.querySelectorAll('.cat-item')[index];
             if (!catEl) return;
 
-            // 逃げるところが見えるように、設定画面をいったん隠す
             isAnimating = true;
             modal.classList.add('hidden');
+
             fleeCat(catEl, index);
 
-            // アニメーションが終わる頃（2.6秒後）にデータから消して保存し、設定画面を戻す
             setTimeout(() => {
                 comments.splice(index, 1);
+
                 isAnimating = false;
+
                 renderComments();
                 updateCatManageList();
                 saveToServer();
+
                 modal.classList.remove('hidden');
             }, 2600);
-        }
+        };
 
         document.getElementById('btnSaveCatLimit').addEventListener('click', async () => {
             const code = modalCodeInput.value;
             const newLimit = parseInt(document.getElementById('modalCatLimit').value, 10);
+
             const res = await fetch('/api/room_action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ room: currentRoom, action: 'change_max_cats', code, max_cats: newLimit })
+                body: JSON.stringify({
+                    room: currentRoom,
+                    action: 'change_max_cats',
+                    code,
+                    max_cats: newLimit
+                })
             });
+
             const data = await res.json();
+
             if (data.status === 'ok') {
                 roomConfig.max_cats = newLimit;
                 alert(`猫の上限数を ${newLimit >= 999 ? '無制限' : newLimit + '匹'} に変更しました！`);
@@ -859,12 +920,20 @@
         document.getElementById('btnChangeTheme').addEventListener('click', async () => {
             const code = modalCodeInput.value;
             const new_theme = document.getElementById('modalNewTheme').value.trim();
+
             const res = await fetch('/api/room_action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ room: currentRoom, action: 'change_theme', code, new_theme })
+                body: JSON.stringify({
+                    room: currentRoom,
+                    action: 'change_theme',
+                    code,
+                    new_theme
+                })
             });
+
             const data = await res.json();
+
             if (data.status === 'ok') {
                 document.getElementById('cloudThemeText').textContent = `💡 ${new_theme}`;
                 modal.classList.add('hidden');
@@ -874,29 +943,33 @@
             }
         });
 
-        /* 💦 猫を解散：汗をかいて0.5秒タメたあと、画面外へ走ってフェードアウト */
         document.getElementById('btnClearCats').addEventListener('click', async () => {
             const code = modalCodeInput.value;
+
             if (!code) {
                 alert("解除コードを入力してください。");
                 return;
             }
 
-            // モーダルを閉じ、通信ガードを【ON】にする
             modal.classList.add('hidden');
             isAnimating = true;
 
-            // 全員に「汗 → 画面外へフェードアウト」を再生
-            document.querySelectorAll('.cat-item').forEach((item, idx) => fleeCat(item, idx));
+            document.querySelectorAll('.cat-item').forEach((item, idx) => {
+                fleeCat(item, idx);
+            });
 
-            // 3. アニメーションが完全に消えた3.5秒後に、サーバーへ「clear_cats」を送る
             setTimeout(async () => {
                 try {
                     const res = await fetch('/api/room_action', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code })
+                        body: JSON.stringify({
+                            room: currentRoom,
+                            action: 'clear_cats',
+                            code
+                        })
                     });
+
                     const data = await res.json();
 
                     if (data.status === 'ok') {
@@ -908,20 +981,28 @@
                 } catch (e) {
                     alert("通信に失敗しました。もう一度試してください。");
                 } finally {
-                    isAnimating = false; // 通信ガードを【解除】し、同期を再開（失敗しても必ず戻す）
+                    isAnimating = false;
                 }
             }, 3500);
         });
 
         document.getElementById('btnDeleteRoom').addEventListener('click', async () => {
             if (!confirm("本当にこの部屋を解散しますか？")) return;
+
             const code = modalCodeInput.value;
+
             const res = await fetch('/api/room_action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ room: currentRoom, action: 'delete', code })
+                body: JSON.stringify({
+                    room: currentRoom,
+                    action: 'delete',
+                    code
+                })
             });
+
             const data = await res.json();
+
             if (data.status === 'ok') {
                 alert("部屋を解散しました。");
                 window.location.href = '/';
@@ -931,7 +1012,13 @@
         });
 
         function escapeHTML(str) {
-            return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+            return String(str).replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            }[tag] || tag));
         }
 
         async function init() {
@@ -951,13 +1038,13 @@
 
                 document.getElementById('headerTitle').textContent = `🐾 ${info.name}`;
                 document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
+
                 applyColorTheme(info.color);
 
                 roomConfig.max_cats = info.max_cats ?? 20;
                 roomConfig.fish_limit = info.fish_limit || 3;
                 roomConfig.code = info.code || '1111';
 
-                // 入った瞬間に、指定したおさかなの数を右下に表示する
                 updateFishBadgeDisplay();
 
                 await fetchComments();
