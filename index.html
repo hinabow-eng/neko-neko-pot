@@ -434,6 +434,11 @@
             let theme = document.getElementById('inTheme').value.trim();
             let code = document.getElementById('inCode').value.trim();
             let color = document.getElementById('inColor').value;
+            // 「ランダム」のときは、ここで色を1つ選んでからサーバーに送る
+            if (color === 'random') {
+                const colors = ['yellow', 'mint', 'blue', 'purple', 'pink'];
+                color = colors[Math.floor(Math.random() * colors.length)];
+            }
             const fishLimit = parseInt(document.getElementById('inFishLimit').value, 10);
 
             if (!name) name = "もふもふ広場";
