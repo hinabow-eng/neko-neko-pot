@@ -92,7 +92,7 @@
             z-index: 90; width: max-content; max-width: 94vw; box-sizing: border-box;
             text-align: center; padding: 6px 14px 8px;
             background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(6px);
-            border: 2px solid var(--border-color); border-radius: 16px;
+            border: none; border-radius: 16px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
         .support-text { font-size: 0.8rem; font-weight: bold; color: var(--header-cat); margin-bottom: 4px; line-height: 1.4; }
@@ -192,8 +192,9 @@
         .cat-item:hover { transform: scale(1.15) !important; z-index: 100 !important; }
 
         /* 💦 汗エフェクト（ポップアップ後、0.4秒間隔で点滅） */
+        .cat-body-wrap { position: relative; }
         .sweat-mark {
-            position: absolute; top: -22px; right: -10px; font-size: 1.5rem;
+            position: absolute; top: -8px; right: -18px; font-size: 1.5rem;
             animation: sweatPop 0.3s forwards, sweatBlink 0.4s infinite steps(1, start);
             pointer-events: none; z-index: 200; opacity: 0;
         }
@@ -212,10 +213,10 @@
         }
         .bubble-text { font-size: 0.85rem; font-weight: 600; text-align: center; word-break: break-all; }
         .bubble-footer { font-size: 0.8rem; color: var(--header-cat); font-weight: bold; }
-        .cat-body-wrap { font-size: 2.8rem; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.12)); }
+        .cat-body-wrap { font-size: 2.8rem; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.12)); position: relative; }
 
         .fish-badge {
-            position: fixed; bottom: 112px; right: 20px;
+            position: fixed; top: 105px; right: 20px;
             background: rgba(255, 255, 255, 0.92); border: 2px solid var(--border-color);
             padding: 8px 16px; border-radius: 20px; font-weight: bold;
             box-shadow: 0 4px 12px rgba(0,0,0,0.12); z-index: 100; font-size: 0.9rem;
@@ -723,7 +724,9 @@
             const sweat = document.createElement('div');
             sweat.className = 'sweat-mark';
             sweat.textContent = '💦';
-            item.appendChild(sweat);
+            // 汗は吹き出しではなく、猫本体の近くに表示する
+            const catBody = item.querySelector('.cat-body-wrap');
+            (catBody || item).appendChild(sweat);
             item.style.pointerEvents = 'none'; // ホバー拡大とぶつからないように
 
             setTimeout(() => {
@@ -881,7 +884,7 @@
                 document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
                 applyColorTheme(info.color);
 
-                roomConfig.max_cats = info.max_cats || 20;
+                roomConfig.max_cats = info.max_cats ?? 20;
                 roomConfig.fish_limit = info.fish_limit || 3;
                 roomConfig.code = info.code || '1111';
 
