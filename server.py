@@ -110,7 +110,8 @@ def get_room_info():
             'exists': True,
             'name': info['name'],
             'theme': info['theme'],
-            'color': info['color']
+            'color': info['color'],
+            'fish_limit': info.get('fish_limit', 3)
         })
     return jsonify({'exists': False})
 
@@ -122,6 +123,14 @@ def create_room():
     if not data or not data.get('name') or not data.get('code'):
         return jsonify({'status': 'error', 'message': '入力項目が不足しています'}), 400
 
+    # 1日のおさかな上限（TOPページで選んだ数。999は無限）。想定外の値は標準の3にする
+    try:
+        fish_limit = int(data.get('fish_limit', 3))
+    except (TypeError, ValueError):
+        fish_limit = 3
+    if fish_limit not in (1, 3, 5, 7, 10, 999):
+        fish_limit = 3
+
     with locked_db() as db:
         room_id = generate_room_id(db)
         db[room_id] = {
@@ -129,7 +138,8 @@ def create_room():
                 'name': str(data['name'])[:20],
                 'theme': data.get('theme', 'みんなの散歩道'),
                 'code': str(data['code']),
-                'color': data.get('color', 'yellow')
+                'color': data.get('color', 'yellow'),
+                'fish_limit': fish_limit
             },
             'cats': [],
             'updated_at': _now().isoformat()
