@@ -860,6 +860,9 @@
                 roomConfig.fish_limit = info.fish_limit || 3;
                 roomConfig.code = info.code || '1111';
 
+                // 入った瞬間に、指定したおさかなの数を右下に表示する
+                updateFishBadgeDisplay();
+
                 await fetchComments();
                 setInterval(fetchComments, 3000);
             }
