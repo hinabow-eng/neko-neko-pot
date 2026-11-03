@@ -2,7 +2,6 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <!-- スマホ最適化のためのViewportタグ -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>猫の散歩道 - マルチルーム版</title>
     <style>
@@ -64,7 +63,6 @@
             background: linear-gradient(180deg, var(--bg-start) 0%, var(--bg-end) 100%);
             color: var(--text-color);
             overflow: hidden;
-            transition: background 0.3s;
             touch-action: manipulation;
         }
 
@@ -85,7 +83,7 @@
 
         .hidden { display: none !important; }
 
-        /* ロビー（トップ）画面 */
+        /* ロビー画面 */
         #lobby {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: rgba(255, 255, 255, 0.95); padding: 24px; border-radius: 20px;
@@ -98,15 +96,14 @@
         .form-group label { display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 4px; }
         .form-group input, .form-group select {
             width: 100%; padding: 10px 14px; border: 2px solid #e5e7eb; border-radius: 10px;
-            outline: none; font-size: 16px; /* iOSフォーカス時ズーム防止のため16px推奨 */
-            box-sizing: border-box;
+            outline: none; font-size: 16px; box-sizing: border-box;
         }
         .form-group input:focus { border-color: var(--button-cat); }
 
         #createRoomBtn {
             width: 100%; background-color: var(--button-cat); color: white; border: none;
             padding: 12px; border-radius: 25px; font-weight: bold; font-size: 1rem;
-            cursor: pointer; margin-top: 10px; transition: background-color 0.2s;
+            cursor: pointer; margin-top: 10px;
         }
         #createRoomBtn:hover { background-color: var(--button-hover); }
 
@@ -120,8 +117,7 @@
 
         .post-container input[type="text"] {
             flex: 1; max-width: 500px; padding: 10px 14px; border: 2px solid #e5e7eb;
-            border-radius: 25px; outline: none; font-size: 16px; /* ズーム防止 */
-            background: white;
+            border-radius: 25px; outline: none; font-size: 16px; background: white;
         }
         .post-container input[type="text"]:focus { border-color: var(--button-cat); }
         .post-container button {
@@ -130,63 +126,33 @@
             white-space: nowrap; font-size: 0.9rem;
         }
 
-        /* ☁️ 横長モクモク雲 */
+        /* ☁️ ふんわり立体的モクモク雲 */
         .cloud-container {
-            position: absolute;
-            top: 120px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 2;
-            pointer-events: none;
-            animation: cloudFloat 6s ease-in-out infinite;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            width: 100%;
+            position: absolute; top: 125px; left: 50%; transform: translateX(-50%);
+            z-index: 2; pointer-events: none; animation: cloudFloat 6s ease-in-out infinite;
+            display: flex; justify-content: center; align-items: center; width: 100%;
         }
 
         .cloud-wrapper-long {
-            position: relative;
-            width: 420px;
-            height: 120px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            transition: transform 0.3s;
+            position: relative; width: 420px; height: 120px;
+            display: flex; justify-content: center; align-items: center; transition: transform 0.3s;
         }
 
         .cloud-svg-long {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            filter: drop-shadow(0px 3px 8px rgba(0,0,0,0.04));
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             overflow: visible;
         }
 
         .cloud-text {
-            font-size: 1.15rem;
-            font-weight: bold;
-            color: var(--header-cat);
-            letter-spacing: 1px;
-            position: relative;
-            z-index: 5;
-            text-align: center;
-            transform: translateX(-25px);
-            margin-top: -4px;
-            max-width: 300px;
-            line-height: 1.3;
-            word-break: break-all;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
+            font-size: 1.15rem; font-weight: bold; color: var(--header-cat);
+            letter-spacing: 0.5px; position: relative; z-index: 5; text-align: center;
+            margin-top: -6px; max-width: 320px; line-height: 1.3;
+            word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
         }
 
-        /* スマホ画面サイズ（幅440px以下）のときの雲サイズ自動調整 */
         @media (max-width: 440px) {
-            .cloud-wrapper-long {
-                transform: scale(0.82);
-            }
+            .cloud-wrapper-long { transform: scale(0.82); }
         }
 
         @keyframes cloudFloat {
@@ -194,19 +160,29 @@
             50% { transform: translate(-50%, -8px); }
         }
 
-        #stage { position: absolute; top: 110px; bottom: 0; left: 0; right: 0; overflow: hidden; }
+        #stage { position: absolute; top: 230px; bottom: 0; left: 0; right: 0; overflow: hidden; }
 
         .cat-item {
             position: absolute; cursor: pointer; user-select: none; z-index: 5;
             display: flex; flex-direction: column; align-items: center;
-            transition: transform 0.2s ease-out, left 1s ease-in, opacity 0.8s ease-in;
+            transition: transform 0.2s ease-out;
         }
         .cat-item:hover { transform: scale(1.15) !important; z-index: 100 !important; }
 
-        .cat-item.run-away {
-            left: 120vw !important;
-            opacity: 0 !important;
+        /* 💦 汗エフェクト（ポップアップ後、0.4秒間隔で点滅） */
+        .sweat-mark {
+            position: absolute; top: -22px; right: -10px; font-size: 1.5rem;
+            animation: sweatPop 0.3s forwards, sweatBlink 0.4s infinite steps(1, start);
+            pointer-events: none; z-index: 200; opacity: 0;
         }
+        @keyframes sweatPop { 0% { transform: scale(0); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes sweatBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.2; } }
+
+        /* 逃走フェードアウト（2.1秒かけて移動＋透明に） */
+        .cat-item.run-away-1 { transform: translate(120vw, -70vh) scale(0.6) rotate(30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
+        .cat-item.run-away-2 { transform: translate(-120vw, -70vh) scale(0.6) rotate(-30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
+        .cat-item.run-away-3 { transform: translate(120vw, 70vh) scale(0.6) rotate(30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
+        .cat-item.run-away-4 { transform: translate(-120vw, 70vh) scale(0.6) rotate(-30deg) !important; opacity: 0 !important; transition: all 2.1s ease-out !important; }
 
         .cat-bubble {
             background: #ffffff; border: 2px solid var(--border-color); border-radius: 18px;
@@ -221,6 +197,28 @@
         .bubble-text { font-size: 0.85rem; font-weight: 600; text-align: center; word-break: break-all; }
         .bubble-footer { font-size: 0.8rem; color: var(--header-cat); font-weight: bold; }
         .cat-body-wrap { font-size: 2.8rem; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.12)); }
+
+        .fish-badge {
+            position: fixed; bottom: 20px; right: 20px;
+            background: rgba(255, 255, 255, 0.92); border: 2px solid var(--border-color);
+            padding: 8px 16px; border-radius: 20px; font-weight: bold;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12); z-index: 100; font-size: 0.9rem;
+            display: flex; align-items: center; gap: 6px; backdrop-filter: blur(4px);
+        }
+
+        .toast-notify {
+            position: fixed; top: 115px; left: 50%; transform: translateX(-50%);
+            background: rgba(120, 53, 15, 0.9); color: white; padding: 8px 18px;
+            border-radius: 20px; font-size: 0.85rem; font-weight: bold; z-index: 1500;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15); animation: toastFade 3s forwards;
+            pointer-events: none;
+        }
+        @keyframes toastFade {
+            0% { opacity: 0; transform: translate(-50%, -10px); }
+            15% { opacity: 1; transform: translate(-50%, 0); }
+            85% { opacity: 1; transform: translate(-50%, 0); }
+            100% { opacity: 0; transform: translate(-50%, -10px); }
+        }
 
         .pop-effect {
             position: absolute; color: var(--header-cat); font-weight: bold; font-size: 1.3rem;
@@ -254,12 +252,18 @@
             justify-content: center; align-items: center;
         }
         .modal-content {
-            background: white; padding: 22px; border-radius: 15px; width: 90%; max-width: 340px; text-align: center;
-            box-sizing: border-box;
+            background: white; padding: 20px; border-radius: 15px; width: 92%; max-width: 380px; text-align: center;
+            box-sizing: border-box; max-height: 85vh; overflow-y: auto;
         }
-        .modal-content input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        .modal-content input, .modal-content select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
         .modal-btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; }
         .modal-btn-group button { padding: 10px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
+
+        /* 猫管理リスト（設定内） */
+        .cat-manage-list { max-height: 160px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; margin: 8px 0; padding: 4px; text-align: left; }
+        .cat-manage-item { display: flex; justify-content: space-between; align-items: center; padding: 6px; border-bottom: 1px solid #f3f4f6; font-size: 0.8rem; gap: 6px; }
+        .cat-manage-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+        .cat-manage-item button { padding: 3px 8px; font-size: 0.75rem; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -274,20 +278,32 @@
         <h2>🐾 新しい広場をつくる</h2>
         <div class="form-group">
             <label>1. 部屋の名前</label>
-            <input type="text" id="inName" placeholder="例: もふもふ広場" maxlength="20">
+            <input type="text" id="inName" placeholder="空欄なら「もふもふ広場」" maxlength="20">
         </div>
         <div class="form-group">
             <label>2. テーマ</label>
-            <input type="text" id="inTheme" placeholder="例: 今週のプチ自慢" maxlength="30">
+            <input type="text" id="inTheme" placeholder="空欄ならランダムテーマ" maxlength="30">
         </div>
         <div class="form-group">
-            <label>3. 解除コード（数字4桁）</label>
-            <input type="password" id="inCode" placeholder="例: 1234" maxlength="4" pattern="\d{4}">
+            <label>3. 1日のおさかな上限</label>
+            <select id="inFishLimit">
+                <option value="3">🐟 3匹（標準）</option>
+                <option value="1">🐟 1匹</option>
+                <option value="5">🐟 5匹</option>
+                <option value="7">🐟 7匹</option>
+                <option value="10">🐟 10匹</option>
+                <option value="999">♾️ 無限</option>
+            </select>
         </div>
         <div class="form-group">
-            <label>4. テーマカラー</label>
+            <label>4. 解除コード（数字4桁）</label>
+            <input type="password" id="inCode" placeholder="変更しない場合は「1111」" maxlength="4" pattern="\d{4}">
+        </div>
+        <div class="form-group">
+            <label>5. テーマカラー</label>
             <select id="inColor">
-                <option value="yellow">💛 イエロー（標準）</option>
+                <option value="random">🎲 ランダム（標準）</option>
+                <option value="yellow">💛 イエロー</option>
                 <option value="mint">💚 ミントグリーン</option>
                 <option value="blue">💙 スカイブルー</option>
                 <option value="purple">💜 ラベンダー</option>
@@ -301,21 +317,31 @@
     <div id="roomView" class="hidden">
         <div class="post-container">
             <input type="text" id="commentInput" placeholder="つぶやきを入力..." maxlength="30">
-            <button id="postBtn">追加 🐾</button>
+            <button id="postBtn">猫を追加 🐾</button>
         </div>
 
-        <!-- 横長モクモク雲テーマ -->
         <div id="cloudBox" class="cloud-container">
             <div class="cloud-wrapper-long">
                 <svg class="cloud-svg-long" viewBox="0 0 440 130" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M 60 90 A 30 30 0 0 1 35 60 A 32 32 0 0 1 65 28 A 35 35 0 0 1 110 22 A 35 35 0 0 1 165 22 A 35 35 0 0 1 220 22 A 35 35 0 0 1 275 22 A 35 35 0 0 1 330 28 A 32 32 0 0 1 360 60 A 30 30 0 0 1 335 90 A 32 32 0 0 1 280 94 A 32 32 0 0 1 220 94 A 32 32 0 0 1 160 94 A 32 32 0 0 1 100 94 A 32 32 0 0 1 60 90 Z" fill="#555555" transform="translate(1, 3)" stroke="#555555" stroke-width="2.5" stroke-linejoin="round" />
-                    <path d="M 60 90 A 30 30 0 0 1 35 60 A 32 32 0 0 1 65 28 A 35 35 0 0 1 110 22 A 35 35 0 0 1 165 22 A 35 35 0 0 1 220 22 A 35 35 0 0 1 275 22 A 35 35 0 0 1 330 28 A 32 32 0 0 1 360 60 A 30 30 0 0 1 335 90 A 32 32 0 0 1 280 95 A 32 32 0 0 1 220 95 A 32 32 0 0 1 160 95 A 32 32 0 0 1 100 95 A 32 32 0 0 1 60 90 Z" fill="#ffffff" stroke="#444444" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" />
+                    <defs>
+                        <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#ffffff" />
+                            <stop offset="70%" stop-color="#f8fafc" />
+                            <stop offset="100%" stop-color="#e2e8f0" />
+                        </linearGradient>
+                        <filter id="cloudShadow" x="-10%" y="-10%" width="120%" height="130%">
+                            <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.08" />
+                        </filter>
+                    </defs>
+                    <path d="M 50 90 A 30 30 0 0 1 25 60 A 32 32 0 0 1 55 28 A 35 35 0 0 1 100 22 A 35 35 0 0 1 155 22 A 35 35 0 0 1 210 22 A 35 35 0 0 1 265 22 A 35 35 0 0 1 320 22 A 35 35 0 0 1 375 28 A 32 32 0 0 1 405 60 A 30 30 0 0 1 380 90 A 32 32 0 0 1 325 95 A 32 32 0 0 1 265 95 A 32 32 0 0 1 205 95 A 32 32 0 0 1 145 95 A 32 32 0 0 1 85 95 A 32 32 0 0 1 50 90 Z" fill="rgba(0,0,0,0.04)" transform="translate(0, 4)" />
+                    <path d="M 50 90 A 30 30 0 0 1 25 60 A 32 32 0 0 1 55 28 A 35 35 0 0 1 100 22 A 35 35 0 0 1 155 22 A 35 35 0 0 1 210 22 A 35 35 0 0 1 265 22 A 35 35 0 0 1 320 22 A 35 35 0 0 1 375 28 A 32 32 0 0 1 405 60 A 30 30 0 0 1 380 90 A 32 32 0 0 1 325 95 A 32 32 0 0 1 265 95 A 32 32 0 0 1 205 95 A 32 32 0 0 1 145 95 A 32 32 0 0 1 85 95 A 32 32 0 0 1 50 90 Z" fill="url(#cloudGrad)" stroke="#cbd5e1" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" filter="url(#cloudShadow)" />
                 </svg>
-                <span id="cloudThemeText" class="cloud-text">💡 今週のプチ自慢</span>
+                <span id="cloudThemeText" class="cloud-text">💡 テーマ</span>
             </div>
         </div>
 
         <div id="stage"></div>
+        <div id="fishBadge" class="fish-badge">🐟 あと <span id="fishRemCount">3</span> 匹</div>
     </div>
 
     <!-- 設定用モーダル -->
@@ -331,8 +357,29 @@
                 <button id="btnChangeTheme" style="width:100%; margin-top:5px; background:#3b82f6; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">テーマを変更する</button>
             </div>
 
+            <!-- 猫の個別管理（固定 / 削除）リスト -->
+            <div style="margin-top:12px; text-align:left;">
+                <label style="font-size:0.8rem; font-weight:bold;">🐈 猫の個別管理 (固定・削除):</label>
+                <div id="catManageList" class="cat-manage-list">
+                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">コードを入れると一覧が出ます</div>
+                </div>
+            </div>
+
+            <!-- 裏コマンド「0518」でのみ出現する猫の上限数設定 -->
+            <div id="secretCatLimitBox" class="hidden" style="margin-top:12px; text-align:left; background:#fff7ed; padding:10px; border-radius:8px; border:1px solid #fdba74;">
+                <label style="font-size:0.8rem; font-weight:bold; color:#c2410c;">🔒 [裏設定] 猫の最大表示数:</label>
+                <select id="modalCatLimit" style="margin-top:4px;">
+                    <option value="10">10 匹</option>
+                    <option value="20" selected>20 匹（標準）</option>
+                    <option value="30">30 匹</option>
+                    <option value="50">50 匹</option>
+                    <option value="999">無制限 ♾️</option>
+                </select>
+                <button id="btnSaveCatLimit" style="width:100%; margin-top:5px; background:#ea580c; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">上限数を更新する</button>
+            </div>
+
             <div class="modal-btn-group">
-                <button id="btnClearCats" style="background:#f59e0b; color:white;">🐾 猫を解散（画面クリア）</button>
+                <button id="btnClearCats" style="background:#f59e0b; color:white;">🐾 猫を解散（ぜんぶ逃がす）</button>
                 <button id="btnDeleteRoom" style="background:#ef4444; color:white;">🏠 部屋を解散（TOPへ戻る）</button>
                 <button id="btnCloseModal" style="background:#e5e7eb; color:#333;">閉じる</button>
             </div>
@@ -341,7 +388,13 @@
 
     <script>
         const catIcons = ['🐱', '😸', '😺', '😻', '😼', '😽', '🙀', '😿', '😾', '🐈', '🐈‍⬛'];
-        
+        const randomThemes = [
+            "今日あったうれしい事",
+            "あした晴れるかな？",
+            "夜ご飯に何食べたい？",
+            "最近のイチオシ",
+            "最近ハマッてる事"
+        ];
         const secretAnimals = [
             { icon: '🐼', keys: ['🐼', '@パンダ', '（パンダ）', '(パンダ)'] },
             { icon: '🐹', keys: ['🐹', '@ハム', '（ハム）', '(ハム)'] },
@@ -351,12 +404,14 @@
         ];
 
         let comments = [];
+        let roomConfig = { max_cats: 20, fish_limit: 3, code: '1111' };
+        let isAnimating = false; // ★アニメーション中のサーバー通信ガード
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
 
         function applyColorTheme(color) {
             document.body.className = '';
-            if (color && color !== 'yellow') {
+            if (color && color !== 'yellow' && color !== 'random') {
                 document.body.classList.add(`theme-${color}`);
             }
         }
@@ -364,7 +419,6 @@
         function parseCommand(text) {
             let targetIcon = null;
             let cleanText = text;
-
             for (const item of secretAnimals) {
                 for (const key of item.keys) {
                     if (cleanText.endsWith(key)) {
@@ -379,20 +433,24 @@
         }
 
         document.getElementById('createRoomBtn').addEventListener('click', async () => {
-            const name = document.getElementById('inName').value.trim();
-            const theme = document.getElementById('inTheme').value.trim();
-            const code = document.getElementById('inCode').value.trim();
-            const color = document.getElementById('inColor').value;
+            let name = document.getElementById('inName').value.trim();
+            let theme = document.getElementById('inTheme').value.trim();
+            let code = document.getElementById('inCode').value.trim();
+            let color = document.getElementById('inColor').value;
+            const fishLimit = parseInt(document.getElementById('inFishLimit').value, 10);
 
-            if (!name || !code || code.length !== 4) {
-                alert("部屋の名前と、4桁の解除コードを入力してください。");
+            if (!name) name = "もふもふ広場";
+            if (!theme) theme = randomThemes[Math.floor(Math.random() * randomThemes.length)];
+            if (!code) code = "1111";
+            if (code.length !== 4) {
+                alert("解除コードは4桁の数字で入力してください。");
                 return;
             }
 
             const res = await fetch('/api/create_room', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, theme, code, color })
+                body: JSON.stringify({ name, theme, code, color, fish_limit: fishLimit })
             });
 
             const data = await res.json();
@@ -407,7 +465,7 @@
             document.querySelectorAll('.cat-item').forEach(el => el.remove());
             const stage = document.getElementById('stage');
             const stageWidth = stage.clientWidth || window.innerWidth;
-            const stageHeight = stage.clientHeight || 500;
+            const stageHeight = stage.clientHeight || 400;
 
             const count = comments.length;
             const cols = Math.min(Math.ceil(Math.sqrt(count * 1.5)), stageWidth < 480 ? 3 : 4);
@@ -432,19 +490,39 @@
                 catItem.style.animation = `${animName} ${animDuration}s infinite ease-in-out`;
 
                 const icon = item.icon || catIcons[index % catIcons.length];
-                
                 const isSecret = secretAnimals.some(sa => sa.icon === icon);
                 const likeIcon = isSecret ? '❤️' : '🐟';
+                const pinMark = item.pinned ? '📌 ' : '';
 
                 catItem.innerHTML = `
                     <div class="cat-bubble">
-                        <div class="bubble-text" title="${escapeHTML(item.text)}">${escapeHTML(item.text)}</div>
+                        <div class="bubble-text" title="${escapeHTML(item.text)}">${pinMark}${escapeHTML(item.text)}</div>
                         <div class="bubble-footer">${likeIcon} <span class="like-count">${item.likes}</span></div>
                     </div>
                     <div class="cat-body-wrap">${icon}</div>
                 `;
 
                 catItem.addEventListener('click', (e) => {
+                    if (roomConfig.fish_limit < 999) {
+                        const today = new Date().toISOString().split('T')[0];
+                        const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
+                        let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
+
+                        if (savedDate !== today) {
+                            usedFish = 0;
+                            localStorage.setItem(`fish_date_${currentRoom}`, today);
+                        }
+
+                        if (usedFish >= roomConfig.fish_limit) {
+                            alert("🐾 今日のおさかなはなくなっちゃった！（また明日ね）");
+                            return;
+                        }
+
+                        usedFish++;
+                        localStorage.setItem(`fish_used_${currentRoom}`, usedFish);
+                        updateFishBadgeDisplay();
+                    }
+
                     item.likes++;
                     catItem.querySelector('.like-count').textContent = item.likes;
                     createPopEffect(e.clientX, e.clientY, likeIcon);
@@ -453,10 +531,36 @@
 
                 stage.appendChild(catItem);
             });
+
+            updateFishBadgeDisplay();
+            updateCatManageList();
+        }
+
+        function updateFishBadgeDisplay() {
+            const badge = document.getElementById('fishBadge');
+            if (roomConfig.fish_limit >= 999) {
+                badge.innerHTML = `🐟 食べ放題 (♾️)`;
+                return;
+            }
+            const today = new Date().toISOString().split('T')[0];
+            const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
+            let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
+            if (savedDate !== today) usedFish = 0;
+
+            const rem = Math.max(0, roomConfig.fish_limit - usedFish);
+            badge.innerHTML = `🐟 あと <span id="fishRemCount">${rem}</span> 匹`;
+        }
+
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = 'toast-notify';
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
         }
 
         async function fetchComments() {
-            if (!currentRoom) return;
+            if (!currentRoom || isAnimating) return; // ★通信ガード中はサーバーからデータを取得しない
             try {
                 const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=` + Date.now());
                 if (res.ok) {
@@ -470,7 +574,7 @@
         }
 
         async function saveToServer() {
-            if (!currentRoom) return;
+            if (!currentRoom || isAnimating) return;
             await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -498,8 +602,18 @@
                 id: Date.now(),
                 text: cleanText || rawText,
                 icon: targetIcon,
-                likes: 0
+                likes: 0,
+                pinned: false
             });
+
+            const maxAllowed = roomConfig.max_cats || 20;
+            if (comments.length > maxAllowed) {
+                let removeIdx = comments.findIndex(c => !c.pinned);
+                if (removeIdx !== -1) {
+                    comments.splice(removeIdx, 1);
+                    showToast("古い猫がバイバイしました 🐾");
+                }
+            }
 
             renderComments();
             saveToServer();
@@ -511,12 +625,88 @@
             if (e.key === 'Enter') handlePost();
         });
 
+        /* 設定モーダル＆猫の管理リスト描画 */
         const modal = document.getElementById('settingsModal');
+        const modalCodeInput = document.getElementById('modalCode');
+        const secretBox = document.getElementById('secretCatLimitBox');
+        const catManageList = document.getElementById('catManageList');
+
         document.getElementById('settingsBtn').addEventListener('click', () => modal.classList.remove('hidden'));
-        document.getElementById('btnCloseModal').addEventListener('click', () => modal.classList.add('hidden'));
+        document.getElementById('btnCloseModal').addEventListener('click', () => {
+            modal.classList.add('hidden');
+            secretBox.classList.add('hidden');
+            modalCodeInput.value = '';
+            catManageList.innerHTML = `<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">コードを入れると一覧が出ます</div>`;
+        });
+
+        modalCodeInput.addEventListener('input', (e) => {
+            const code = e.target.value;
+            if (code === roomConfig.code || code === '0518') {
+                updateCatManageList();
+            } else {
+                catManageList.innerHTML = `<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">コードが違います</div>`;
+            }
+
+            if (code === '0518') {
+                secretBox.classList.remove('hidden');
+            } else {
+                secretBox.classList.add('hidden');
+            }
+        });
+
+        /* 猫管理リストの更新（固定切替・個別削除） */
+        function updateCatManageList() {
+            if (comments.length === 0) {
+                catManageList.innerHTML = `<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">いま猫はいません</div>`;
+                return;
+            }
+            catManageList.innerHTML = '';
+            comments.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'cat-manage-item';
+                div.innerHTML = `
+                    <span>${item.icon || '🐱'} ${escapeHTML(item.text)}</span>
+                    <button style="background:${item.pinned ? '#10b981' : '#9ca3af'}; color:white;" onclick="togglePin(${index})">${item.pinned ? '固定中' : '通常'}</button>
+                    <button style="background:#ef4444; color:white;" onclick="removeCat(${index})">サヨナラ</button>
+                `;
+                catManageList.appendChild(div);
+            });
+        }
+
+        window.togglePin = function(index) {
+            comments[index].pinned = !comments[index].pinned;
+            renderComments();
+            updateCatManageList();
+            saveToServer();
+        }
+
+        window.removeCat = function(index) {
+            if (!confirm(`“${comments[index].text}”の猫をバイバイさせますか？`)) return;
+            comments.splice(index, 1);
+            renderComments();
+            updateCatManageList();
+            saveToServer();
+        }
+
+        document.getElementById('btnSaveCatLimit').addEventListener('click', async () => {
+            const code = modalCodeInput.value;
+            const newLimit = parseInt(document.getElementById('modalCatLimit').value, 10);
+            const res = await fetch('/api/room_action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ room: currentRoom, action: 'change_max_cats', code, max_cats: newLimit })
+            });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                roomConfig.max_cats = newLimit;
+                alert(`猫の上限数を ${newLimit >= 999 ? '無制限' : newLimit + '匹'} に変更しました！`);
+            } else {
+                alert(data.message);
+            }
+        });
 
         document.getElementById('btnChangeTheme').addEventListener('click', async () => {
-            const code = document.getElementById('modalCode').value;
+            const code = modalCodeInput.value;
             const new_theme = document.getElementById('modalNewTheme').value.trim();
             const res = await fetch('/api/room_action', {
                 method: 'POST',
@@ -533,38 +723,54 @@
             }
         });
 
+        /* 💦 解散エフェクト：事前の通信エラーを防ぎつつ、アニメーション完了（3.5秒後）にサーバーへ「clear_cats」通信を送る */
         document.getElementById('btnClearCats').addEventListener('click', async () => {
-            const code = document.getElementById('modalCode').value;
+            const code = modalCodeInput.value;
             if (!code) {
                 alert("解除コードを入力してください。");
                 return;
             }
 
-            const res = await fetch('/api/room_action', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code })
-            });
-            const data = await res.json();
-            if (data.status === 'ok') {
-                modal.classList.add('hidden');
-                
-                document.querySelectorAll('.cat-item').forEach(item => {
-                    item.classList.add('run-away');
-                });
+            // モーダルを閉じ、通信ガードを【ON】にする（余計な事前エラーを防ぎます）
+            modal.classList.add('hidden');
+            isAnimating = true; 
+            
+            // 1. 即座に全猫に「💦」をつけてタメ（0.5秒） ＋ 点滅逃走（2.1秒）を再生
+            const catEls = document.querySelectorAll('.cat-item');
+            catEls.forEach((item, idx) => {
+                const sweat = document.createElement('div');
+                sweat.className = 'sweat-mark';
+                sweat.textContent = '💦';
+                item.appendChild(sweat);
 
+                const dirClass = `run-away-${(idx % 4) + 1}`;
                 setTimeout(() => {
+                    item.classList.add(dirClass);
+                }, 500); // 0.5秒タメ
+            });
+
+            // 2. アニメーションが完全に消え去った 3.5秒後に、サーバーへ「clear_cats」の通信を送る
+            setTimeout(async () => {
+                const res = await fetch('/api/room_action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code }) // ★サーバーが正しく受け取る action名
+                });
+                const data = await res.json();
+
+                if (data.status === 'ok') {
                     comments = [];
                     renderComments();
-                }, 900);
-            } else {
-                alert(data.message);
-            }
+                } else {
+                    alert(data.message || "解除コードが違います。");
+                }
+                isAnimating = false; // 通信ガードを【解除】し、同期を再開
+            }, 3500);
         });
 
         document.getElementById('btnDeleteRoom').addEventListener('click', async () => {
             if (!confirm("本当にこの部屋を解散しますか？")) return;
-            const code = document.getElementById('modalCode').value;
+            const code = modalCodeInput.value;
             const res = await fetch('/api/room_action', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -601,6 +807,10 @@
                 document.getElementById('headerTitle').textContent = `🐾 ${info.name}`;
                 document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
                 applyColorTheme(info.color);
+
+                roomConfig.max_cats = info.max_cats || 20;
+                roomConfig.fish_limit = info.fish_limit || 3;
+                roomConfig.code = info.code || '1111';
 
                 await fetchComments();
                 setInterval(fetchComments, 3000);
