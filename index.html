@@ -188,6 +188,16 @@
             position: absolute; cursor: pointer; user-select: none; z-index: 5;
             display: flex; flex-direction: column; align-items: center;
             transition: transform 0.2s ease-out;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 歩行アニメーションは外側のタップ・ホバー効果と分離する */
+        .cat-motion {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transform-origin: center center;
+            will-change: transform;
         }
         .cat-item:hover { transform: scale(1.15) !important; z-index: 100 !important; }
 
@@ -491,74 +501,131 @@
         });
 
         function renderComments() {
-            document.querySelectorAll('.cat-item').forEach(el => el.remove());
             const stage = document.getElementById('stage');
             const stageWidth = stage.clientWidth || window.innerWidth;
             const stageHeight = stage.clientHeight || 400;
 
+            // 既存の猫をIDで再利用する。同期のたびに全消去・再描画しない。
+            const existingCats = new Map(
+                Array.from(stage.querySelectorAll('.cat-item')).map(el => [el.dataset.catKey, el])
+            );
+            const activeKeys = new Set();
+
             const count = comments.length;
             const cols = Math.min(Math.ceil(Math.sqrt(count * 1.5)), stageWidth < 480 ? 3 : 4);
-            const rows = Math.ceil(count / cols);
-            const cellWidth = stageWidth / cols;
+            const rows = Math.ceil(count / (cols || 1));
+            const cellWidth = stageWidth / (cols || 1);
             const cellHeight = stageHeight / (rows || 1);
 
             comments.forEach((item, index) => {
-                const catItem = document.createElement('div');
-                catItem.className = 'cat-item';
+                const key = String(item.id ?? `legacy-${index}`);
+                activeKeys.add(key);
 
-                const c = index % cols;
-                const r = Math.floor(index / cols);
-                const randomX = Math.random() * (cellWidth * 0.2) + (cellWidth * 0.05);
-                const randomY = Math.random() * (cellHeight * 0.2) + (cellHeight * 0.05);
+                let catItem = existingCats.get(key);
+                const isNew = !catItem;
 
-                catItem.style.left = (c * cellWidth + randomX) + 'px';
-                catItem.style.top = (r * cellHeight + randomY) + 'px';
+                if (isNew) {
+                    catItem = document.createElement('div');
+                    catItem.className = 'cat-item';
+                    catItem.dataset.catKey = key;
 
-                const animName = index % 2 === 0 ? 'walkSmooth1' : 'walkSmooth2';
-                const animDuration = 8 + (index % 3) * 2;
-                catItem.style.animation = `${animName} ${animDuration}s infinite ease-in-out`;
+                    const c = index % cols;
+                    const r = Math.floor(index / cols);
+                    const randomX = Math.random() * (cellWidth * 0.2) + (cellWidth * 0.05);
+                    const randomY = Math.random() * (cellHeight * 0.2) + (cellHeight * 0.05);
+                    catItem.style.left = (c * cellWidth + randomX) + 'px';
+                    catItem.style.top = (r * cellHeight + randomY) + 'px';
+
+                    // タップ時の拡大と歩行アニメーションが同じtransformを奪い合わないよう、
+                    // 歩行は内側の.cat-motionに担当させる。
+                    catItem.innerHTML = `
+                        <div class="cat-motion">
+                            <div class="cat-bubble">
+                                <div class="bubble-text"></div>
+                                <div class="bubble-footer">🐟 <span class="like-count"></span></div>
+                            </div>
+                            <div class="cat-body-wrap"></div>
+                        </div>
+                    `;
+
+                    const motion = catItem.querySelector('.cat-motion');
+                    const animName = index % 2 === 0 ? 'walkSmooth1' : 'walkSmooth2';
+                    const animDuration = 8 + (index % 3) * 2;
+
+                    // 初回だけ全員が同じタイミングで動き始める「ガクッ」を避ける。
+                    // マイナスのdelayで、最初から歩行サイクルの途中に配置する。
+                    const phase = Math.random() * animDuration;
+                    motion.style.animation = `${animName} ${animDuration}s ${-phase}s infinite ease-in-out`;
+
+                    // ハンドラーは一度だけ登録し、最新のcommentsから対象猫を探す。
+                    catItem.addEventListener('click', (e) => {
+                        const currentIndex = comments.findIndex((c, i) =>
+                            String(c.id ?? `legacy-${i}`) === catItem.dataset.catKey
+                        );
+                        if (currentIndex < 0) return;
+
+                        const currentItem = comments[currentIndex];
+
+                        if (roomConfig.fish_limit < 999) {
+                            const today = new Date().toISOString().split('T')[0];
+                            const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
+                            let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
+
+                            if (savedDate !== today) {
+                                usedFish = 0;
+                                localStorage.setItem(`fish_date_${currentRoom}`, today);
+                            }
+
+                            if (usedFish >= roomConfig.fish_limit) {
+                                alert("🐾 今日のおさかなはなくなっちゃった！（また明日ね）");
+                                return;
+                            }
+
+                            usedFish++;
+                            localStorage.setItem(`fish_used_${currentRoom}`, usedFish);
+                            updateFishBadgeDisplay();
+                        }
+
+                        currentItem.likes = (Number(currentItem.likes) || 0) + 1;
+                        const countEl = catItem.querySelector('.like-count');
+                        if (countEl) countEl.textContent = currentItem.likes;
+
+                        createPopEffect(e.clientX, e.clientY, catItem.dataset.likeIcon || '🐟');
+                        saveToServer();
+                    });
+
+                    stage.appendChild(catItem);
+                }
 
                 const icon = item.icon || catIcons[index % catIcons.length];
                 const isSecret = secretAnimals.some(sa => sa.icon === icon);
                 const likeIcon = isSecret ? '❤️' : '🐟';
                 const pinMark = item.pinned ? '📌 ' : '';
 
-                catItem.innerHTML = `
-                    <div class="cat-bubble">
-                        <div class="bubble-text" title="${escapeHTML(item.text)}">${pinMark}${escapeHTML(item.text)}</div>
-                        <div class="bubble-footer">${likeIcon} <span class="like-count">${item.likes}</span></div>
-                    </div>
-                    <div class="cat-body-wrap">${icon}</div>
-                `;
+                catItem.dataset.likeIcon = likeIcon;
 
-                catItem.addEventListener('click', (e) => {
-                    if (roomConfig.fish_limit < 999) {
-                        const today = new Date().toISOString().split('T')[0];
-                        const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
-                        let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
+                // アイコンが変わってもDOM全体を作り直さず、歩行アニメーションを維持。
+                const bubbleText = catItem.querySelector('.bubble-text');
+                const body = catItem.querySelector('.cat-body-wrap');
+                const footer = catItem.querySelector('.bubble-footer');
 
-                        if (savedDate !== today) {
-                            usedFish = 0;
-                            localStorage.setItem(`fish_date_${currentRoom}`, today);
-                        }
+                if (bubbleText) {
+                    bubbleText.textContent = pinMark + item.text;
+                    bubbleText.title = item.text;
+                }
+                if (body && catItem.dataset.icon !== icon) {
+                    body.textContent = icon;
+                    catItem.dataset.icon = icon;
+                }
+                if (footer) {
+                    const countEl = footer.querySelector('.like-count');
+                    footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
+                }
+            });
 
-                        if (usedFish >= roomConfig.fish_limit) {
-                            alert("🐾 今日のおさかなはなくなっちゃった！（また明日ね）");
-                            return;
-                        }
-
-                        usedFish++;
-                        localStorage.setItem(`fish_used_${currentRoom}`, usedFish);
-                        updateFishBadgeDisplay();
-                    }
-
-                    item.likes++;
-                    catItem.querySelector('.like-count').textContent = item.likes;
-                    createPopEffect(e.clientX, e.clientY, likeIcon);
-                    saveToServer();
-                });
-
-                stage.appendChild(catItem);
+            // サーバー側で削除された猫だけ取り除く。
+            existingCats.forEach((el, key) => {
+                if (!activeKeys.has(key)) el.remove();
             });
 
             updateFishBadgeDisplay();
@@ -727,7 +794,9 @@
             // 汗は吹き出しではなく、猫本体の近くに表示する
             const catBody = item.querySelector('.cat-body-wrap');
             (catBody || item).appendChild(sweat);
-            item.style.pointerEvents = 'none'; // ホバー拡大とぶつからないように
+            item.style.pointerEvents = 'none';
+            const motion = item.querySelector('.cat-motion');
+            if (motion) motion.style.animationPlayState = 'paused';
 
             setTimeout(() => {
                 // いまの位置（歩きアニメの途中）を取得してから、歩きを止める
