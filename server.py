@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import secrets
@@ -153,6 +154,8 @@ def create_room():
                 'cat_addition_disabled': False
             },
             'cats': [],
+            'clear_version': 0,
+            'free_positions': [],
             'updated_at': _now().isoformat()
         }
     return jsonify({'status': 'ok', 'room_id': room_id})
@@ -163,8 +166,14 @@ def get_data_json():
     room_id = request.args.get('room', '')
     db = load_db()
     if room_id in db:
-        return jsonify(db[room_id]['cats'])
-    return jsonify([])
+        response = jsonify(db[room_id].get('cats', []))
+        response.headers['X-Clear-Version'] = str(db[room_id].get('clear_version', 0))
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    response = jsonify([])
+    response.headers['X-Clear-Version'] = '0'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route('/save', methods=['POST'])
@@ -178,16 +187,82 @@ def save_data():
         if room_id in db:
             room = db[room_id]
             existing = room.get('cats', [])
+            try:
+                client_clear_version = int(request.headers.get('X-Clear-Version', '-1'))
+            except (TypeError, ValueError):
+                client_clear_version = -1
+            server_clear_version = int(room.get('clear_version', 0))
+            if client_clear_version != server_clear_version:
+                return jsonify({
+                    'status': 'stale',
+                    'message': '部屋の猫一覧が更新されています',
+                    'clear_version': server_clear_version
+                }), 409
             if not isinstance(data, list):
-                return jsonify({'status': 'error', 'message': '猫データの形式が正しくありません'}), 400
-            if room.get('info', {}).get('cat_addition_disabled', False):
-                old_ids = {str(cat.get('id')) for cat in existing if isinstance(cat, dict) and cat.get('id') is not None}
-                new_ids = {str(cat.get('id')) for cat in data if isinstance(cat, dict) and cat.get('id') is not None}
-                if not new_ids.issubset(old_ids):
-                    return jsonify({'status': 'error', 'message': 'この部屋では猫の追加が禁止されています'}), 403
-            room['cats'] = data
+                return jsonify({
+                    'status': 'error',
+                    'message': '猫データの形式が正しくありません'
+                }), 400
+
+            old_ids = {
+                str(cat.get('id'))
+                for cat in existing
+                if isinstance(cat, dict) and cat.get('id') is not None
+            }
+            new_ids = {
+                str(cat.get('id'))
+                for cat in data
+                if isinstance(cat, dict) and cat.get('id') is not None
+            }
+
+            if room.get('info', {}).get('cat_addition_disabled', False) and not new_ids.issubset(old_ids):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'この部屋では猫の追加が禁止されています'
+                }), 403
+
+            # いなくなった猫の座標を空き場所として保存し、新しい猫に優先的に再利用する。
+            free_positions = room.setdefault('free_positions', [])
+            removed = [
+                cat for cat in existing
+                if isinstance(cat, dict)
+                and cat.get('id') is not None
+                and str(cat.get('id')) not in new_ids
+            ]
+
+            for cat in removed:
+                x, y = cat.get('x'), cat.get('y')
+                if (
+                    isinstance(x, (int, float))
+                    and isinstance(y, (int, float))
+                    and math.isfinite(x)
+                    and math.isfinite(y)
+                ):
+                    free_positions.append({'x': float(x), 'y': float(y)})
+
+            free_positions[:] = free_positions[-200:]
+
+            saved_cats = [dict(cat) if isinstance(cat, dict) else cat for cat in data]
+
+            for cat in saved_cats:
+                if not isinstance(cat, dict):
+                    continue
+
+                cat_id = cat.get('id')
+                if cat_id is not None and str(cat_id) not in old_ids and free_positions:
+                    position = free_positions.pop(0)
+                    cat['x'] = position['x']
+                    cat['y'] = position['y']
+
+            room['cats'] = saved_cats
             room['updated_at'] = _now().isoformat()
-            return jsonify({'status': 'ok'})
+
+            return jsonify({
+                'status': 'ok',
+                'clear_version': server_clear_version,
+                'cats': saved_cats
+            })
+
     return jsonify({'status': 'error'}), 400
 
 
@@ -200,7 +275,10 @@ def room_action():
 
     with locked_db() as db:
         if room_id not in db:
-            return jsonify({'status': 'error', 'message': '部屋が存在しません'}), 404
+            return jsonify({
+                'status': 'error',
+                'message': '部屋が存在しません'
+            }), 404
 
         room_info = db[room_id]['info']
 
@@ -211,7 +289,10 @@ def room_action():
             valid_code = True
 
         if not valid_code:
-            return jsonify({'status': 'error', 'message': '管理コードが正しくありません'}), 403
+            return jsonify({
+                'status': 'error',
+                'message': '管理コードが正しくありません'
+            }), 403
 
         if action == 'delete':
             del db[room_id]
@@ -221,37 +302,76 @@ def room_action():
             disabled = bool(data.get('disabled', False))
             room_info['cat_addition_disabled'] = disabled
             db[room_id]['updated_at'] = _now().isoformat()
-            return jsonify({'status': 'ok', 'action': action, 'cat_addition_disabled': disabled})
+            return jsonify({
+                'status': 'ok',
+                'action': action,
+                'cat_addition_disabled': disabled
+            })
 
         elif action == 'clear_cats':
-            db[room_id]['cats'] = []
+            room = db[room_id]
+            free_positions = room.setdefault('free_positions', [])
+
+            for cat in room.get('cats', []):
+                if isinstance(cat, dict):
+                    x, y = cat.get('x'), cat.get('y')
+                    if (
+                        isinstance(x, (int, float))
+                        and isinstance(y, (int, float))
+                        and math.isfinite(x)
+                        and math.isfinite(y)
+                    ):
+                        free_positions.append({'x': float(x), 'y': float(y)})
+
+            free_positions[:] = free_positions[-200:]
+            room['cats'] = []
+            room['clear_version'] = int(room.get('clear_version', 0)) + 1
             db[room_id]['updated_at'] = _now().isoformat()
-            return jsonify({'status': 'ok', 'action': 'clear_cats'})
+
+            return jsonify({
+                'status': 'ok',
+                'action': 'clear_cats',
+                'clear_version': db[room_id]['clear_version']
+            })
 
         elif action == 'change_theme':
             new_theme = str(data.get('new_theme', '')).strip()[:30]
             room_info['theme'] = new_theme
             db[room_id]['updated_at'] = _now().isoformat()
-            return jsonify({'status': 'ok', 'action': 'change_theme', 'new_theme': new_theme})
+            return jsonify({
+                'status': 'ok',
+                'action': 'change_theme',
+                'new_theme': new_theme
+            })
 
         elif action == 'change_max_cats':
             try:
                 new_limit = int(data.get('max_cats', 20))
             except (TypeError, ValueError):
-                return jsonify({'status': 'error', 'message': '上限数の指定が正しくありません'}), 400
+                return jsonify({
+                    'status': 'error',
+                    'message': '上限数の指定が正しくありません'
+                }), 400
 
             if new_limit not in ALLOWED_CAT_LIMITS:
-                return jsonify({'status': 'error', 'message': '指定できる上限数ではありません'}), 400
+                return jsonify({
+                    'status': 'error',
+                    'message': '指定できる上限数ではありません'
+                }), 400
 
             room_info['max_cats'] = new_limit
             db[room_id]['updated_at'] = _now().isoformat()
+
             return jsonify({
                 'status': 'ok',
                 'action': 'change_max_cats',
                 'max_cats': new_limit
             })
 
-    return jsonify({'status': 'error', 'message': '無効な操作です'}), 400
+    return jsonify({
+        'status': 'error',
+        'message': '無効な操作です'
+    }), 400
 
 
 if __name__ == '__main__':
