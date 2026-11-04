@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+    <script>
+        // 部屋URLでは初回描画からTOP画面を隠し、画面切替時のちらつきを防ぐ
+        (function () {
+            try {
+                if (new URLSearchParams(location.search).has('room')) {
+                    document.documentElement.classList.add('room-link');
+                }
+            } catch (_) {}
+        })();
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>猫の散歩道 - マルチルーム版</title>
@@ -82,6 +92,12 @@
         header .settings-btn:hover { background: rgba(255,255,255,0.4); }
 
         .hidden { display: none !important; }
+        html.room-link #lobby { display: none !important; }
+        html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
+        html.room-link #roomView:not(.hidden) { visibility: visible; }
+        .cat-item { touch-action: none; }
+        .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
+        .cat-body-wrap { transform-origin: center bottom; transition: transform .25s ease; }
         .code-input { -webkit-text-security: disc; text-security: disc; }
 
         .support-box {
@@ -311,7 +327,7 @@
             </select>
         </div>
         <div class="form-group">
-            <label>4. 解除コード（数字4桁）</label>
+            <label>4. 管理コード（数字4桁）</label>
             <input type="text" id="inCode" class="code-input" placeholder="変更しない場合は「1111」" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
         </div>
         <div class="form-group">
@@ -361,13 +377,22 @@
     <div id="settingsModal" class="modal hidden">
         <div class="modal-content">
             <h3>⚙️ 部屋の設定</h3>
-            <p style="font-size:0.8rem; color:#666;">操作には4桁の解除コードが必要です</p>
-            <input type="text" id="modalCode" class="code-input" placeholder="解除コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <p style="font-size:0.8rem; color:#666;">操作には4桁の管理コードが必要です</p>
+            <input type="text" id="modalCode" class="code-input" placeholder="管理コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
 
             <div style="margin-top:10px; text-align:left;">
                 <label style="font-size:0.8rem; font-weight:bold;">テーマの変更:</label>
                 <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
                 <button id="btnChangeTheme" style="width:100%; margin-top:5px; background:#3b82f6; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">テーマを変更する</button>
+            </div>
+
+            <div style="margin-top:12px; text-align:left; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+                <label style="font-size:0.85rem; font-weight:bold; display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="disableCatAddition" style="width:auto; margin:0;">
+                    訪問者の猫追加を禁止する
+                </label>
+                <div id="catAdditionStatus" style="font-size:0.75rem; color:#64748b; margin-top:5px;">管理コードを入力すると変更できます</div>
+                <button id="btnSaveCatAddition" style="width:100%; margin-top:7px; background:#64748b; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">追加設定を保存</button>
             </div>
 
             <div style="margin-top:12px; text-align:left;">
@@ -420,7 +445,13 @@
         ];
 
         let comments = [];
-        let roomConfig = { max_cats: 20, fish_limit: 3, code: '1111' };
+        let roomConfig = { max_cats: 20, fish_limit: 3, cat_addition_disabled: false };
+        let verifiedAdminCode = '';
+        let saveQueue = Promise.resolve();
+        let pendingSaves = 0;
+        let lastServerSnapshot = '';
+        let dragState = null;
+        let suppressNextCatClick = false;
         let isAnimating = false;
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
@@ -431,6 +462,13 @@
                 document.body.classList.add(`theme-${color}`);
             }
         }
+
+        // TOP画面では選択変更時にテーマカラーを即時プレビュー
+        const colorSelect = document.getElementById('inColor');
+        colorSelect.addEventListener('change', () => {
+            const selected = colorSelect.value;
+            applyColorTheme(selected === 'random' ? 'yellow' : selected);
+        });
 
         function parseCommand(text) {
             let targetIcon = null;
@@ -465,8 +503,8 @@
             if (!theme) theme = randomThemes[Math.floor(Math.random() * randomThemes.length)];
             if (!code) code = "1111";
 
-            if (code.length !== 4) {
-                alert("解除コードは4桁の数字で入力してください。");
+            if (!/^\d{4}$/.test(code)) {
+                alert("管理コードは4桁の数字で入力してください。");
                 return;
             }
 
@@ -518,8 +556,12 @@
                     const randomX = Math.random() * (cellWidth * 0.2) + (cellWidth * 0.05);
                     const randomY = Math.random() * (cellHeight * 0.2) + (cellHeight * 0.05);
 
-                    catItem.style.left = (c * cellWidth + randomX) + 'px';
-                    catItem.style.top = (r * cellHeight + randomY) + 'px';
+                    const initialX = Number.isFinite(Number(item.x)) ? Number(item.x) : (c * cellWidth + randomX);
+                    const initialY = Number.isFinite(Number(item.y)) ? Number(item.y) : (r * cellHeight + randomY);
+                    item.x = initialX;
+                    item.y = initialY;
+                    catItem.style.left = initialX + 'px';
+                    catItem.style.top = initialY + 'px';
 
                     catItem.innerHTML = `
                         <div class="cat-motion">
@@ -539,6 +581,7 @@
                     motion.style.animation = `${animName} ${animDuration}s ${-phase}s infinite ease-in-out`;
 
                     catItem.addEventListener('click', (e) => {
+                        if (suppressNextCatClick) { suppressNextCatClick = false; return; }
                         const currentIndex = comments.findIndex((c, i) =>
                             String(c.id ?? `legacy-${i}`) === catItem.dataset.catKey
                         );
@@ -576,7 +619,12 @@
                     });
 
                     stage.appendChild(catItem);
+                    attachCatDrag(catItem);
                 }
+
+                // 保存済み位置がある猫は、再描画後も同じ場所に置く
+                if (Number.isFinite(Number(item.x))) catItem.style.left = Number(item.x) + 'px';
+                if (Number.isFinite(Number(item.y))) catItem.style.top = Number(item.y) + 'px';
 
                 const icon = item.icon || catIcons[index % catIcons.length];
                 const isSecret = secretAnimals.some(sa => sa.icon === icon);
@@ -602,6 +650,9 @@
                 if (footer) {
                     footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
                 }
+                const likes = Number(item.likes) || 0;
+                const growth = likes >= 100 ? 1.60 : likes >= 50 ? 1.50 : likes >= 30 ? 1.40 : likes >= 20 ? 1.30 : likes >= 10 ? 1.20 : likes >= 5 ? 1.10 : 1;
+                if (body) body.style.transform = `scale(${growth})`;
             });
 
             existingCats.forEach((el, key) => {
@@ -610,6 +661,21 @@
 
             updateFishBadgeDisplay();
             updateCatManageList();
+        }
+
+        function updateCatAdditionUI() {
+            const input = document.getElementById('commentInput');
+            const button = document.getElementById('postBtn');
+            const disabled = !!roomConfig.cat_addition_disabled;
+            input.disabled = disabled;
+            button.disabled = disabled;
+            input.placeholder = disabled ? 'この部屋では猫の追加が禁止されています' : 'つぶやきを入力...';
+            button.style.opacity = disabled ? '0.45' : '1';
+            button.style.cursor = disabled ? 'not-allowed' : 'pointer';
+            document.getElementById('disableCatAddition').checked = disabled;
+            document.getElementById('catAdditionStatus').textContent = disabled
+                ? '現在、訪問者は猫を追加できません。管理コードで解除できます。'
+                : '現在、訪問者も猫を追加できます。';
         }
 
         function updateFishBadgeDisplay() {
@@ -639,34 +705,88 @@
         }
 
         async function fetchComments() {
-            if (!currentRoom || isAnimating) return;
-
+            if (!currentRoom || isAnimating || pendingSaves > 0 || dragState) return;
             try {
-                const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=` + Date.now());
-
-                if (res.ok) {
-                    const newComments = await res.json();
-
-                    if (isAnimating) return;
-
-                    if (JSON.stringify(newComments) !== JSON.stringify(comments)) {
-                        comments = newComments;
-                        renderComments();
-                    }
+                const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                if (!res.ok) return;
+                const newComments = await res.json();
+                if (pendingSaves > 0 || dragState) return;
+                const snapshot = JSON.stringify(newComments);
+                if (snapshot !== lastServerSnapshot && snapshot !== JSON.stringify(comments)) {
+                    comments = newComments;
+                    lastServerSnapshot = snapshot;
+                    renderComments();
                 }
-            } catch (e) {}
+            } catch (e) { /* 一時的な通信失敗は次回ポーリングで再試行 */ }
         }
 
+        // 同一ブラウザからの保存を必ず直列化し、古いスナップショットの後着を防ぐ
         async function saveToServer() {
             if (!currentRoom || isAnimating) return;
+            const snapshot = JSON.stringify(comments);
+            pendingSaves++;
+            saveQueue = saveQueue.then(async () => {
+                try {
+                    const res = await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': ' application/json'.trim() },
+                        body: snapshot
+                    });
+                    if (res.ok) lastServerSnapshot = snapshot;
+                    else if (res.status === 403) showToast('この部屋では猫の追加が禁止されています');
+                } catch (e) {
+                    showToast('保存に失敗しました。通信状態を確認してください');
+                } finally {
+                    pendingSaves = Math.max(0, pendingSaves - 1);
+                }
+            });
+            return saveQueue;
+        }
 
-            try {
-                await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(comments)
-                });
-            } catch (e) {}
+        // Pointer Eventsでマウス・タッチの両方に対応
+        function attachCatDrag(catItem) {
+            catItem.addEventListener('pointerdown', (e) => {
+                if (e.button !== undefined && e.button !== 0) return;
+                if (e.target.closest('button')) return;
+                const key = catItem.dataset.catKey;
+                const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === key);
+                if (idx < 0) return;
+                const rect = catItem.getBoundingClientRect();
+                dragState = { key, idx, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
+                    offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+                    startLeft: parseFloat(catItem.style.left) || 0, startTop: parseFloat(catItem.style.top) || 0,
+                    moved: false, element: catItem };
+                try { catItem.setPointerCapture(e.pointerId); } catch (_) {}
+            });
+            catItem.addEventListener('pointermove', (e) => {
+                if (!dragState || dragState.pointerId !== e.pointerId || dragState.element !== catItem) return;
+                const dx = e.clientX - dragState.startX, dy = e.clientY - dragState.startY;
+                if (Math.abs(dx) + Math.abs(dy) > 5) dragState.moved = true;
+                if (!dragState.moved) return;
+                catItem.classList.add('is-dragging');
+                const stageRect = document.getElementById('stage').getBoundingClientRect();
+                const maxX = Math.max(0, stageRect.width - catItem.offsetWidth);
+                const maxY = Math.max(0, stageRect.height - catItem.offsetHeight);
+                const x = Math.max(0, Math.min(maxX, dragState.startLeft + dx));
+                const y = Math.max(0, Math.min(maxY, dragState.startTop + dy));
+                catItem.style.left = x + 'px'; catItem.style.top = y + 'px';
+            });
+            const finish = (e) => {
+                if (!dragState || dragState.pointerId !== e.pointerId || dragState.element !== catItem) return;
+                const state = dragState; dragState = null;
+                catItem.classList.remove('is-dragging');
+                if (state.moved) {
+                    const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === state.key);
+                    if (idx >= 0) {
+                        comments[idx].x = parseFloat(catItem.style.left) || 0;
+                        comments[idx].y = parseFloat(catItem.style.top) || 0;
+                        suppressNextCatClick = true;
+                        saveToServer();
+                    }
+                }
+            };
+            catItem.addEventListener('pointerup', finish);
+            catItem.addEventListener('pointercancel', finish);
         }
 
         function createPopEffect(x, y, iconMark) {
@@ -680,6 +800,10 @@
         }
 
         function handlePost() {
+            if (roomConfig.cat_addition_disabled) {
+                showToast('この部屋では猫の追加が禁止されています');
+                return;
+            }
             const input = document.getElementById('commentInput');
             const rawText = input.value.trim();
 
@@ -687,12 +811,15 @@
 
             const { cleanText, targetIcon } = parseCommand(rawText);
 
+            const stage = document.getElementById('stage');
             comments.push({
-                id: Date.now(),
+                id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
                 text: cleanText || rawText,
                 icon: targetIcon,
                 likes: 0,
-                pinned: false
+                pinned: false,
+                x: Math.max(8, Math.random() * Math.max(40, stage.clientWidth - 100)),
+                y: Math.max(8, Math.random() * Math.max(40, stage.clientHeight - 150))
             });
 
             const maxAllowed = roomConfig.max_cats || 20;
@@ -722,13 +849,14 @@
         const secretBox = document.getElementById('secretCatLimitBox');
         const catManageList = document.getElementById('catManageList');
 
-        // ★今回追加：解除コードの確認関数
+        // ★今回追加：管理コードの確認関数
         function isAdminCodeValid() {
             const code = modalCodeInput.value.trim();
-            return code === String(roomConfig.code || '1111') || code === '0518';
+            return (code !== '' && code === verifiedAdminCode) || code === '0518';
         }
 
         document.getElementById('settingsBtn').addEventListener('click', () => {
+            updateCatAdditionUI();
             modal.classList.remove('hidden');
         });
 
@@ -736,6 +864,7 @@
             modal.classList.add('hidden');
             secretBox.classList.add('hidden');
             modalCodeInput.value = '';
+            verifiedAdminCode = '';
 
             catManageList.innerHTML = `
                 <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
@@ -743,33 +872,34 @@
                 </div>`;
         });
 
-        modalCodeInput.addEventListener('input', (e) => {
-            const code = e.target.value;
+        modalCodeInput.addEventListener('input', async (e) => {
+            const code = e.target.value.trim();
+            verifiedAdminCode = '';
+            if (code === '0518') secretBox.classList.remove('hidden');
+            else secretBox.classList.add('hidden');
 
-            if (isAdminCodeValid()) {
-                updateCatManageList();
-            } else {
-                catManageList.innerHTML = `
-                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
-                        コードが違います
-                    </div>`;
+            if (/^\d{4}$/.test(code)) {
+                try {
+                    const res = await fetch(`/api/verify_code?room=${encodeURIComponent(currentRoom)}&code=${encodeURIComponent(code)}`);
+                    const result = await res.json();
+                    if (modalCodeInput.value.trim() === code && result.valid) verifiedAdminCode = code;
+                } catch (_) {}
             }
-
-            if (code === '0518') {
-                secretBox.classList.remove('hidden');
-            } else {
-                secretBox.classList.add('hidden');
-            }
+            if (isAdminCodeValid()) updateCatManageList();
+            else catManageList.innerHTML = `
+                <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                    管理コードを入力してください
+                </div>`;
         });
 
-        /* 猫管理リストの更新（解除コード確認つき） */
+        /* 猫管理リストの更新（管理コード確認つき） */
         function updateCatManageList() {
 
-            // ★今回修正：解除コードが正しくなければ一覧を表示しない
+            // ★今回修正：管理コードが正しくなければ一覧を表示しない
             if (!isAdminCodeValid()) {
                 catManageList.innerHTML = `
                     <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
-                        解除コードを入力してください
+                        管理コードを入力してください
                     </div>`;
                 return;
             }
@@ -804,11 +934,11 @@
             });
         }
 
-        // ★今回修正：固定・解除にも解除コード確認を追加
+        // ★今回修正：固定・解除にも管理コード確認を追加
         window.togglePin = function(index) {
 
             if (!isAdminCodeValid()) {
-                alert("解除コードが違います。");
+                alert("管理コードが違います。");
                 return;
             }
 
@@ -860,12 +990,12 @@
             }, 500);
         }
 
-        /* 個別にサヨナラ（解除コード必須） */
+        /* 個別にサヨナラ（管理コード必須） */
         window.removeCat = function(index) {
 
-            // ★今回修正：サヨナラ実行時にも解除コードを確認
+            // ★今回修正：サヨナラ実行時にも管理コードを確認
             if (!isAdminCodeValid()) {
-                alert("解除コードが違います。");
+                alert("管理コードが違います。");
                 return;
             }
 
@@ -891,6 +1021,26 @@
                 modal.classList.remove('hidden');
             }, 2600);
         };
+
+        document.getElementById('btnSaveCatAddition').addEventListener('click', async () => {
+            const code = modalCodeInput.value.trim();
+            if (!/^\d{4}$/.test(code)) {
+                alert('4桁の管理コードを入力してください。');
+                return;
+            }
+            const disabled = document.getElementById('disableCatAddition').checked;
+            try {
+                const res = await fetch('/api/room_action', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room: currentRoom, action: 'change_cat_addition', code, disabled })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') throw new Error(data.message || '設定を変更できませんでした');
+                roomConfig.cat_addition_disabled = !!data.cat_addition_disabled;
+                updateCatAdditionUI();
+                showToast(roomConfig.cat_addition_disabled ? '訪問者の猫追加を禁止しました' : '猫の追加禁止を解除しました');
+            } catch (err) { alert(err.message || '通信に失敗しました'); }
+        });
 
         document.getElementById('btnSaveCatLimit').addEventListener('click', async () => {
             const code = modalCodeInput.value;
@@ -947,7 +1097,7 @@
             const code = modalCodeInput.value;
 
             if (!code) {
-                alert("解除コードを入力してください。");
+                alert("管理コードを入力してください。");
                 return;
             }
 
@@ -976,7 +1126,7 @@
                         comments = [];
                         renderComments();
                     } else {
-                        alert(data.message || "解除コードが違います。");
+                        alert(data.message || "管理コードが違います。");
                     }
                 } catch (e) {
                     alert("通信に失敗しました。もう一度試してください。");
@@ -1043,12 +1193,13 @@
 
                 roomConfig.max_cats = info.max_cats ?? 20;
                 roomConfig.fish_limit = info.fish_limit || 3;
-                roomConfig.code = info.code || '1111';
+                roomConfig.cat_addition_disabled = !!info.cat_addition_disabled;
+                updateCatAdditionUI();
 
                 updateFishBadgeDisplay();
 
                 await fetchComments();
-                setInterval(fetchComments, 3000);
+                setInterval(fetchComments, 1200);
             }
         }
 
