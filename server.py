@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 import string
 import tempfile
@@ -107,9 +108,21 @@ def get_room_info():
             'theme': info['theme'],
             'color': info['color'],
             'fish_limit': info.get('fish_limit', 3),
-            'max_cats': info.get('max_cats', 20)
+            'max_cats': info.get('max_cats', 20),
+            'cat_addition_disabled': bool(info.get('cat_addition_disabled', False))
         })
     return jsonify({'exists': False})
+
+
+@app.route('/api/verify_code')
+def verify_code():
+    room_id = request.args.get('room', '')
+    code = str(request.args.get('code', ''))
+    db = load_db()
+    if room_id not in db:
+        return jsonify({'valid': False}), 404
+    valid = secrets.compare_digest(str(db[room_id]['info'].get('code', '')), code)
+    return jsonify({'valid': valid})
 
 
 @app.route('/api/create_room', methods=['POST'])
@@ -117,6 +130,8 @@ def create_room():
     data = request.get_json(silent=True)
     if not data or not data.get('name') or not data.get('code'):
         return jsonify({'status': 'error', 'message': '入力項目が不足しています'}), 400
+    if not re.fullmatch(r'\d{4}', str(data.get('code', ''))):
+        return jsonify({'status': 'error', 'message': '管理コードは4桁の数字で入力してください'}), 400
 
     try:
         fish_limit = int(data.get('fish_limit', 3))
@@ -134,7 +149,8 @@ def create_room():
                 'code': str(data['code']),
                 'color': data.get('color', 'yellow'),
                 'fish_limit': fish_limit,
-                'max_cats': 20
+                'max_cats': 20,
+                'cat_addition_disabled': False
             },
             'cats': [],
             'updated_at': _now().isoformat()
@@ -160,8 +176,17 @@ def save_data():
 
     with locked_db() as db:
         if room_id in db:
-            db[room_id]['cats'] = data
-            db[room_id]['updated_at'] = _now().isoformat()
+            room = db[room_id]
+            existing = room.get('cats', [])
+            if not isinstance(data, list):
+                return jsonify({'status': 'error', 'message': '猫データの形式が正しくありません'}), 400
+            if room.get('info', {}).get('cat_addition_disabled', False):
+                old_ids = {str(cat.get('id')) for cat in existing if isinstance(cat, dict) and cat.get('id') is not None}
+                new_ids = {str(cat.get('id')) for cat in data if isinstance(cat, dict) and cat.get('id') is not None}
+                if not new_ids.issubset(old_ids):
+                    return jsonify({'status': 'error', 'message': 'この部屋では猫の追加が禁止されています'}), 403
+            room['cats'] = data
+            room['updated_at'] = _now().isoformat()
             return jsonify({'status': 'ok'})
     return jsonify({'status': 'error'}), 400
 
@@ -179,18 +204,24 @@ def room_action():
 
         room_info = db[room_id]['info']
 
-        # 通常操作は部屋ごとの解除コードで照合。
+        # 通常操作は部屋ごとの管理コードで照合。
         # 猫の最大表示数変更だけは、裏設定コード「0518」でも許可する。
         valid_code = room_info['code'] == code
         if action == 'change_max_cats' and code == SECRET_CAT_LIMIT_CODE:
             valid_code = True
 
         if not valid_code:
-            return jsonify({'status': 'error', 'message': '解除コードが正しくありません'}), 403
+            return jsonify({'status': 'error', 'message': '管理コードが正しくありません'}), 403
 
         if action == 'delete':
             del db[room_id]
             return jsonify({'status': 'ok', 'action': 'delete'})
+
+        elif action == 'change_cat_addition':
+            disabled = bool(data.get('disabled', False))
+            room_info['cat_addition_disabled'] = disabled
+            db[room_id]['updated_at'] = _now().isoformat()
+            return jsonify({'status': 'ok', 'action': action, 'cat_addition_disabled': disabled})
 
         elif action == 'clear_cats':
             db[room_id]['cats'] = []
