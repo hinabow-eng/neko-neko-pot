@@ -95,9 +95,17 @@
         html.room-link #lobby { display: none !important; }
         html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
         html.room-link #roomView:not(.hidden) { visibility: visible; }
-        .cat-item { touch-action: none; }
+        .cat-item { touch-action: none !important; }
         .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
-        .cat-body-wrap { transform-origin: center bottom; transition: transform .25s ease; }
+        .cat-body-wrap { transform-origin: center bottom; transition: transform .3s ease; }
+        .admin-controls.locked { opacity: .38; filter: grayscale(1); pointer-events: none; user-select: none; }
+        .admin-section { margin-top: 9px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; overflow: hidden; }
+        .admin-section > summary { cursor: pointer; list-style: none; padding: 12px 13px; font-size: .88rem; font-weight: 700; color: #475569; background: #f8fafc; }
+        .admin-section > summary::-webkit-details-marker { display: none; }
+        .admin-section > summary::after { content: '＋'; float: right; color: #94a3b8; }
+        .admin-section[open] > summary::after { content: '－'; }
+        .admin-section-content { padding: 10px; border-top: 1px solid #e2e8f0; }
+        #adminCodeStatus { min-height: 1.2em; margin-top: 5px; font-size: .75rem; color: #64748b; }
         .code-input { -webkit-text-security: disc; text-security: disc; }
 
         .support-box {
@@ -197,7 +205,7 @@
             position: absolute; cursor: pointer; user-select: none; z-index: 5;
             display: flex; flex-direction: column; align-items: center;
             transition: transform 0.2s ease-out;
-            touch-action: manipulation;
+            touch-action: none;
             -webkit-tap-highlight-color: transparent;
         }
         .cat-motion {
@@ -380,30 +388,51 @@
             <p style="font-size:0.8rem; color:#666;">操作には4桁の管理コードが必要です</p>
             <input type="text" id="modalCode" class="code-input" placeholder="管理コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
 
-            <div style="margin-top:10px; text-align:left;">
-                <label style="font-size:0.8rem; font-weight:bold;">テーマの変更:</label>
-                <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
-                <button id="btnChangeTheme" style="width:100%; margin-top:5px; background:#3b82f6; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">テーマを変更する</button>
+            <div id="adminCodeStatus">管理コードを入力すると、下の設定を操作できます。</div>
+            <div id="adminControls" class="admin-controls locked" aria-disabled="true">
+                <details class="admin-section">
+                    <summary>🎨 テーマの変更</summary>
+                    <div class="admin-section-content">
+                        <label style="font-size:0.8rem; font-weight:bold;">新しいテーマ</label>
+                        <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
+                        <button id="btnChangeTheme" style="width:100%; margin-top:7px; background:#3b82f6; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">テーマを変更する</button>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>🐾 訪問者の猫追加設定</summary>
+                    <div class="admin-section-content">
+                        <label style="font-size:0.85rem; font-weight:bold; display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="disableCatAddition" style="width:auto; margin:0;">
+                            訪問者の猫追加を禁止する
+                        </label>
+                        <div id="catAdditionStatus" style="font-size:0.75rem; color:#64748b; margin-top:7px;">現在、訪問者も猫を追加できます。</div>
+                        <button id="btnSaveCatAddition" style="width:100%; margin-top:7px; background:#64748b; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">追加設定を保存</button>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>🐈 猫の個別管理（固定・サヨナラ）</summary>
+                    <div class="admin-section-content">
+                        <div id="catManageList" class="cat-manage-list">
+                            <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">管理コードを確認しています</div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>⚙️ 詳細設定</summary>
+                    <div class="admin-section-content">
+                        <div class="modal-btn-group" style="margin-top:8px;">
+                            <button id="btnClearCats" style="background:#f59e0b; color:white;">🐾 猫を解散（ぜんぶ逃がす）</button>
+                            <button id="btnDeleteRoom" style="background:#ef4444; color:white;">🏠 部屋を解散（TOPへ戻る）</button>
+                        </div>
+                    </div>
+                </details>
             </div>
 
-            <div style="margin-top:12px; text-align:left; padding:10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
-                <label style="font-size:0.85rem; font-weight:bold; display:flex; align-items:center; gap:8px;">
-                    <input type="checkbox" id="disableCatAddition" style="width:auto; margin:0;">
-                    訪問者の猫追加を禁止する
-                </label>
-                <div id="catAdditionStatus" style="font-size:0.75rem; color:#64748b; margin-top:5px;">管理コードを入力すると変更できます</div>
-                <button id="btnSaveCatAddition" style="width:100%; margin-top:7px; background:#64748b; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">追加設定を保存</button>
-            </div>
-
-            <div style="margin-top:12px; text-align:left;">
-                <label style="font-size:0.8rem; font-weight:bold;">🐈 猫の個別管理 (固定・削除):</label>
-                <div id="catManageList" class="cat-manage-list">
-                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">コードを入れると一覧が出ます</div>
-                </div>
-            </div>
-
-            <div id="secretCatLimitBox" class="hidden" style="margin-top:12px; text-align:left; background:#fff7ed; padding:10px; border-radius:8px; border:1px solid #fdba74;">
-                <label style="font-size:0.8rem; font-weight:bold; color:#c2410c;">🔒 [裏設定] 猫の最大表示数:</label>
+            <div id="secretCatLimitBox" class="hidden" style="margin-top:10px; text-align:left; background:#fff7ed; padding:10px; border-radius:8px; border:1px solid #fdba74;">
+                <label style="font-size:0.8rem; font-weight:bold; color:#c2410c;">🔒 [裏設定] 猫の最大表示数（専用コード）:</label>
                 <select id="modalCatLimit" style="margin-top:4px;">
                     <option value="10">10 匹</option>
                     <option value="20" selected>20 匹（標準）</option>
@@ -415,14 +444,11 @@
             </div>
 
             <div class="modal-btn-group">
-                <button id="btnClearCats" style="background:#f59e0b; color:white;">🐾 猫を解散（ぜんぶ逃がす）</button>
-                <button id="btnDeleteRoom" style="background:#ef4444; color:white;">🏠 部屋を解散（TOPへ戻る）</button>
                 <button id="btnCloseModal" style="background:#e5e7eb; color:#333;">閉じる</button>
             </div>
         </div>
     </div>
-
-    <div class="support-box">
+        <div class="support-box">
         <div class="support-text">サーバー代のご支援いただけると、大変たすかりますニャ🐱</div>
         <a class="ofuse-btn" href="https://ofuse.me/o?uid=231659" target="_blank" rel="noopener noreferrer">💙 OFUSEで応援を送る</a>
     </div>
@@ -450,9 +476,11 @@
         let saveQueue = Promise.resolve();
         let pendingSaves = 0;
         let lastServerSnapshot = '';
+        let roomClearVersion = 0;
         let dragState = null;
         let suppressNextCatClick = false;
         let isAnimating = false;
+        let isClearingCats = false;
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
 
@@ -522,6 +550,55 @@
                 alert(data.message || "作成に失敗しました。");
             }
         });
+
+        function getCatGrowthScale(likes) {
+            const n = Number(likes) || 0;
+            if (n >= 100) return 2.20;
+            if (n >= 50) return 1.90;
+            if (n >= 30) return 1.70;
+            if (n >= 20) return 1.50;
+            if (n >= 10) return 1.30;
+            if (n >= 5) return 1.15;
+            return 1.00;
+        }
+
+        function applyCatGrowth(catItem, likes) {
+            const body = catItem?.querySelector('.cat-body-wrap');
+            if (body) body.style.transform = `scale(${getCatGrowthScale(likes)})`;
+        }
+
+        // 現在の猫の位置を見て、空いているグリッド位置を優先して使う。
+        function findOpenCatPosition(stage) {
+            const width = stage.clientWidth || window.innerWidth;
+            const height = stage.clientHeight || 400;
+            const cols = width < 480 ? 3 : 4;
+            const cellW = width / cols;
+            const cellH = Math.max(115, Math.min(175, height / 3));
+            const rows = Math.max(2, Math.floor(height / cellH));
+            const candidates = [];
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    candidates.push({
+                        x: Math.max(4, Math.min(width - 90, c * cellW + (cellW - 80) / 2)),
+                        y: Math.max(4, Math.min(height - 110, r * cellH + 8))
+                    });
+                }
+            }
+            if (!comments.length) return candidates[Math.floor(candidates.length / 2)] || { x: 20, y: 20 };
+            let best = candidates[0];
+            let bestDistance = -1;
+            for (const candidate of candidates) {
+                let nearest = Infinity;
+                for (const cat of comments) {
+                    const dx = candidate.x - (Number(cat.x) || 0);
+                    const dy = candidate.y - (Number(cat.y) || 0);
+                    nearest = Math.min(nearest, Math.hypot(dx, dy));
+                }
+                if (nearest > bestDistance) { bestDistance = nearest; best = candidate; }
+                if (nearest > Math.min(cellW * 0.55, 105)) return candidate;
+            }
+            return best || { x: 20, y: 20 };
+        }
 
         function renderComments() {
             const stage = document.getElementById('stage');
@@ -613,6 +690,7 @@
 
                         const countEl = catItem.querySelector('.like-count');
                         if (countEl) countEl.textContent = currentItem.likes;
+                        applyCatGrowth(catItem, currentItem.likes);
 
                         createPopEffect(e.clientX, e.clientY, catItem.dataset.likeIcon || '🐟');
                         saveToServer();
@@ -650,9 +728,7 @@
                 if (footer) {
                     footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
                 }
-                const likes = Number(item.likes) || 0;
-                const growth = likes >= 100 ? 1.60 : likes >= 50 ? 1.50 : likes >= 30 ? 1.40 : likes >= 20 ? 1.30 : likes >= 10 ? 1.20 : likes >= 5 ? 1.10 : 1;
-                if (body) body.style.transform = `scale(${growth})`;
+                applyCatGrowth(catItem, item.likes);
             });
 
             existingCats.forEach((el, key) => {
@@ -710,6 +786,8 @@
                 const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
                 if (!res.ok) return;
                 const newComments = await res.json();
+                const serverClearVersion = Number(res.headers.get('X-Clear-Version'));
+                if (Number.isFinite(serverClearVersion)) roomClearVersion = serverClearVersion;
                 if (pendingSaves > 0 || dragState) return;
                 const snapshot = JSON.stringify(newComments);
                 if (snapshot !== lastServerSnapshot && snapshot !== JSON.stringify(comments)) {
@@ -723,17 +801,54 @@
         // 同一ブラウザからの保存を必ず直列化し、古いスナップショットの後着を防ぐ
         async function saveToServer() {
             if (!currentRoom || isAnimating) return;
-            const snapshot = JSON.stringify(comments);
             pendingSaves++;
             saveQueue = saveQueue.then(async () => {
+                const snapshot = JSON.stringify(comments);
                 try {
                     const res = await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
                         method: 'POST',
-                        headers: { 'Content-Type': ' application/json'.trim() },
+                        headers: { 'Content-Type': 'application/json', 'X-Clear-Version': String(roomClearVersion) },
                         body: snapshot
                     });
-                    if (res.ok) lastServerSnapshot = snapshot;
-                    else if (res.status === 403) showToast('この部屋では猫の追加が禁止されています');
+                    if (res.ok) {
+                        const saved = await res.json();
+                        if (Array.isArray(saved.cats)) {
+                            const sentCats = JSON.parse(snapshot);
+                            const sentById = new Map(sentCats.filter(c => c && c.id != null).map(c => [String(c.id), c]));
+                            const savedById = new Map(saved.cats.filter(c => c && c.id != null).map(c => [String(c.id), c]));
+                            let positionUpdated = false;
+                            comments.forEach(cat => {
+                                if (!cat || cat.id == null) return;
+                                const sent = sentById.get(String(cat.id));
+                                const stored = savedById.get(String(cat.id));
+                                if (!sent || !stored) return;
+                                // 送信後にドラッグされていない場合だけ、サーバーが割り当てた空き位置を反映。
+                                if (cat.x === sent.x && cat.y === sent.y && (cat.x !== stored.x || cat.y !== stored.y)) {
+                                    cat.x = stored.x;
+                                    cat.y = stored.y;
+                                    positionUpdated = true;
+                                }
+                            });
+                            lastServerSnapshot = JSON.stringify(saved.cats);
+                            if (positionUpdated) renderComments();
+                        } else {
+                            lastServerSnapshot = snapshot;
+                        }
+                    } else if (res.status === 409) {
+                        // 猫の解散前に送られた古い保存データは復活させず、サーバーの最新状態に合わせる。
+                        const latest = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                        if (latest.ok) {
+                            const serverCats = await latest.json();
+                            const version = Number(latest.headers.get('X-Clear-Version'));
+                            if (Number.isFinite(version)) roomClearVersion = version;
+                            comments = serverCats;
+                            lastServerSnapshot = JSON.stringify(serverCats);
+                            renderComments();
+                        }
+                        showToast('部屋の状態が更新されたため、最新の猫一覧に合わせました');
+                    } else if (res.status === 403) {
+                        showToast('この部屋では猫の追加が禁止されています');
+                    }
                 } catch (e) {
                     showToast('保存に失敗しました。通信状態を確認してください');
                 } finally {
@@ -748,6 +863,7 @@
             catItem.addEventListener('pointerdown', (e) => {
                 if (e.button !== undefined && e.button !== 0) return;
                 if (e.target.closest('button')) return;
+                if (e.cancelable) e.preventDefault();
                 const key = catItem.dataset.catKey;
                 const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === key);
                 if (idx < 0) return;
@@ -787,6 +903,7 @@
             };
             catItem.addEventListener('pointerup', finish);
             catItem.addEventListener('pointercancel', finish);
+            catItem.addEventListener('lostpointercapture', finish);
         }
 
         function createPopEffect(x, y, iconMark) {
@@ -800,6 +917,7 @@
         }
 
         function handlePost() {
+            if (isClearingCats) { showToast('猫の解散処理中です。少し待ってね'); return; }
             if (roomConfig.cat_addition_disabled) {
                 showToast('この部屋では猫の追加が禁止されています');
                 return;
@@ -818,8 +936,7 @@
                 icon: targetIcon,
                 likes: 0,
                 pinned: false,
-                x: Math.max(8, Math.random() * Math.max(40, stage.clientWidth - 100)),
-                y: Math.max(8, Math.random() * Math.max(40, stage.clientHeight - 150))
+                ...findOpenCatPosition(stage)
             });
 
             const maxAllowed = roomConfig.max_cats || 20;
@@ -831,6 +948,8 @@
                     comments.splice(removeIdx, 1);
                     showToast("古い猫がバイバイしました 🐾");
                 }
+            }
+                            }
             }
 
             renderComments();
@@ -852,10 +971,22 @@
         // ★今回追加：管理コードの確認関数
         function isAdminCodeValid() {
             const code = modalCodeInput.value.trim();
-            return (code !== '' && code === verifiedAdminCode) || code === '0518';
+            return code !== '' && code === verifiedAdminCode;
+        }
+
+        function updateAdminControlsUI() {
+            const controls = document.getElementById('adminControls');
+            const status = document.getElementById('adminCodeStatus');
+            const valid = isAdminCodeValid();
+            controls.classList.toggle('locked', !valid);
+            controls.setAttribute('aria-disabled', valid ? 'false' : 'true');
+            status.textContent = valid
+                ? '管理コードを確認しました。項目を開いて設定できます。'
+                : '管理コードを入力すると、下の設定を操作できます。';
         }
 
         document.getElementById('settingsBtn').addEventListener('click', () => {
+            updateAdminControlsUI();
             updateCatAdditionUI();
             modal.classList.remove('hidden');
         });
@@ -865,6 +996,8 @@
             secretBox.classList.add('hidden');
             modalCodeInput.value = '';
             verifiedAdminCode = '';
+            updateAdminControlsUI();
+            document.querySelectorAll('#adminControls details').forEach(section => { section.open = false; });
 
             catManageList.innerHTML = `
                 <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
@@ -885,71 +1018,75 @@
                     if (modalCodeInput.value.trim() === code && result.valid) verifiedAdminCode = code;
                 } catch (_) {}
             }
-            if (isAdminCodeValid()) updateCatManageList();
-            else catManageList.innerHTML = `
-                <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
-                    管理コードを入力してください
-                </div>`;
-        });
-
-        /* 猫管理リストの更新（管理コード確認つき） */
-        function updateCatManageList() {
-
-            // ★今回修正：管理コードが正しくなければ一覧を表示しない
-            if (!isAdminCodeValid()) {
+            updateAdminControlsUI();
+            if (isAdminCodeValid()) {
+                try {
+                    await saveQueue;
+                    const latest = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                    if (latest.ok && modalCodeInput.value.trim() === code && isAdminCodeValid()) {
+                        comments = await latest.json();
+                        const version = Number(latest.headers.get('X-Clear-Version'));
+                        if (Number.isFinite(version)) roomClearVersion = version;
+                        lastServerSnapshot = JSON.stringify(comments);
+                        renderComments();
+                    }
+                } catch (_) {}
+                updateCatManageList();
+            } else {
                 catManageList.innerHTML = `
                     <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
                         管理コードを入力してください
                     </div>`;
+            }
+        });
+
+        /* 猫管理リストの更新（管理コード確認つき） */
+        function updateCatManageList() {
+            if (!isAdminCodeValid()) {
+                catManageList.innerHTML = '<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">管理コードを入力してください</div>';
                 return;
             }
-
             if (comments.length === 0) {
-                catManageList.innerHTML = `
-                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
-                        いま猫はいません
-                    </div>`;
+                catManageList.innerHTML = '<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">いま猫はいません</div>';
                 return;
             }
-
             catManageList.innerHTML = '';
-
             comments.forEach((item, index) => {
+                const id = String(item.id ?? `legacy-${index}`);
                 const div = document.createElement('div');
                 div.className = 'cat-manage-item';
-
-                div.innerHTML = `
-                    <span>${item.icon || '🐱'} ${escapeHTML(item.text)}</span>
-                    <button style="background:${item.pinned ? '#10b981' : '#9ca3af'}; color:white;"
-                        onclick="togglePin(${index})">
-                        ${item.pinned ? '固定中' : '通常'}
-                    </button>
-                    <button style="background:#ef4444; color:white;"
-                        onclick="removeCat(${index})">
-                        サヨナラ
-                    </button>
-                `;
-
+                const name = document.createElement('span');
+                name.textContent = `${item.icon || '🐱'} ${item.text || ''}`;
+                const pin = document.createElement('button');
+                pin.type = 'button';
+                pin.style.cssText = `background:${item.pinned ? '#10b981' : '#9ca3af'}; color:white;`;
+                pin.textContent = item.pinned ? '固定中' : '通常';
+                pin.addEventListener('click', () => togglePinById(id));
+                const bye = document.createElement('button');
+                bye.type = 'button';
+                bye.style.cssText = 'background:#ef4444; color:white;';
+                bye.textContent = 'サヨナラ';
+                bye.addEventListener('click', () => removeCatById(id));
+                div.append(name, pin, bye);
                 catManageList.appendChild(div);
             });
         }
 
-        // ★今回修正：固定・解除にも管理コード確認を追加
         window.togglePin = function(index) {
-
-            if (!isAdminCodeValid()) {
-                alert("管理コードが違います。");
-                return;
-            }
-
+            if (!isAdminCodeValid()) { alert('管理コードが違います。'); return; }
             if (index < 0 || index >= comments.length) return;
+            togglePinById(String(comments[index].id ?? `legacy-${index}`));
+        };
 
-            comments[index].pinned = !comments[index].pinned;
-
+        function togglePinById(id) {
+            if (!isAdminCodeValid()) { alert('管理コードが違います。'); return; }
+            const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === id);
+            if (idx < 0) { updateCatManageList(); return; }
+            comments[idx].pinned = !comments[idx].pinned;
             renderComments();
             updateCatManageList();
             saveToServer();
-        };
+        }
 
         const fleeDirs = [
             { x:  1, y: -1, rot:  30 },
@@ -990,37 +1127,33 @@
             }, 500);
         }
 
-        /* 個別にサヨナラ（管理コード必須） */
+        /* 個別にサヨナラ：表示中の猫IDを指定し、途中で追加があっても別の猫を消さない */
         window.removeCat = function(index) {
+            if (index < 0 || index >= comments.length) return;
+            removeCatById(String(comments[index].id ?? `legacy-${index}`));
+        };
 
-            // ★今回修正：サヨナラ実行時にも管理コードを確認
-            if (!isAdminCodeValid()) {
-                alert("管理コードが違います。");
-                return;
-            }
-
+        function removeCatById(id) {
+            if (!isAdminCodeValid()) { alert('管理コードが違います。'); return; }
             if (isAnimating) return;
-
-            const catEl = document.querySelectorAll('.cat-item')[index];
-            if (!catEl) return;
+            const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === id);
+            if (idx < 0) { updateCatManageList(); return; }
+            const catEl = Array.from(document.querySelectorAll('.cat-item')).find(el => el.dataset.catKey === id);
+            if (!catEl) { comments.splice(idx, 1); renderComments(); saveToServer(); return; }
 
             isAnimating = true;
             modal.classList.add('hidden');
-
-            fleeCat(catEl, index);
-
+            fleeCat(catEl, idx);
             setTimeout(() => {
-                comments.splice(index, 1);
-
+                const currentIndex = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === id);
+                if (currentIndex >= 0) comments.splice(currentIndex, 1);
                 isAnimating = false;
-
                 renderComments();
                 updateCatManageList();
                 saveToServer();
-
                 modal.classList.remove('hidden');
             }, 2600);
-        };
+        }
 
         document.getElementById('btnSaveCatAddition').addEventListener('click', async () => {
             const code = modalCodeInput.value.trim();
@@ -1094,46 +1227,59 @@
         });
 
         document.getElementById('btnClearCats').addEventListener('click', async () => {
-            const code = modalCodeInput.value;
+            const code = modalCodeInput.value.trim();
+            if (!isAdminCodeValid()) { alert('正しい管理コードを入力してください。'); return; }
+            if (isClearingCats) return;
+            if (!confirm('部屋にいる猫をすべて解散しますか？')) return;
 
-            if (!code) {
-                alert("管理コードを入力してください。");
-                return;
+            isClearingCats = true;
+            try {
+                await saveQueue;
+                const oldCats = Array.from(document.querySelectorAll('.cat-item')).map((el, idx) => {
+                    const rect = el.getBoundingClientRect();
+                    const ghost = el.cloneNode(true);
+                    ghost.classList.add('clear-cat-ghost');
+                    ghost.style.position = 'fixed';
+                    ghost.style.left = rect.left + 'px';
+                    ghost.style.top = rect.top + 'px';
+                    ghost.style.width = rect.width + 'px';
+                    ghost.style.height = rect.height + 'px';
+                    ghost.style.margin = '0';
+                    ghost.style.pointerEvents = 'none';
+                    ghost.style.zIndex = '2000';
+                    document.body.appendChild(ghost);
+                    return ghost;
+                });
+
+                const res = await fetch('/api/room_action', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') throw new Error(data.message || '猫を解散できませんでした');
+
+                if (Number.isFinite(Number(data.clear_version))) roomClearVersion = Number(data.clear_version);
+                isClearingCats = false;
+                comments = [];
+                lastServerSnapshot = '[]';
+                renderComments();
+                updateCatManageList();
+                modal.classList.add('hidden');
+
+                oldCats.forEach((ghost, idx) => {
+                    const d = fleeDirs[idx % fleeDirs.length];
+                    ghost.animate([
+                        { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
+                        { transform: `translate(${d.x * window.innerWidth * 0.8}px, ${d.y * window.innerHeight * 0.6}px) scale(.55) rotate(${d.rot}deg)`, opacity: 0 }
+                    ], { duration: 1800, easing: 'ease-in', fill: 'forwards' }).onfinish = () => ghost.remove();
+                });
+                showToast('猫たちがみんな帰りました 🐾');
+                // 解散直後から新しい猫を追加できるようにする。
+            } catch (err) {
+                isClearingCats = false;
+                document.querySelectorAll('.clear-cat-ghost').forEach(el => el.remove());
+                alert(err.message || '通信に失敗しました。もう一度試してください。');
             }
-
-            modal.classList.add('hidden');
-            isAnimating = true;
-
-            document.querySelectorAll('.cat-item').forEach((item, idx) => {
-                fleeCat(item, idx);
-            });
-
-            setTimeout(async () => {
-                try {
-                    const res = await fetch('/api/room_action', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            room: currentRoom,
-                            action: 'clear_cats',
-                            code
-                        })
-                    });
-
-                    const data = await res.json();
-
-                    if (data.status === 'ok') {
-                        comments = [];
-                        renderComments();
-                    } else {
-                        alert(data.message || "管理コードが違います。");
-                    }
-                } catch (e) {
-                    alert("通信に失敗しました。もう一度試してください。");
-                } finally {
-                    isAnimating = false;
-                }
-            }, 3500);
         });
 
         document.getElementById('btnDeleteRoom').addEventListener('click', async () => {
