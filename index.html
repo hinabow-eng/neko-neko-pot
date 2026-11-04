@@ -105,6 +105,26 @@
         .admin-section > summary::after { content: '＋'; float: right; color: #94a3b8; }
         .admin-section[open] > summary::after { content: '－'; }
         .admin-section-content { padding: 10px; border-top: 1px solid #e2e8f0; }
+        /* 設定項目は、開いた瞬間にふわっと下へ広がる */
+        .admin-section[open] > .admin-section-content {
+            transform-origin: top center;
+            animation: adminSectionOpen .38s cubic-bezier(.2,.75,.25,1) both;
+        }
+        @keyframes adminSectionOpen {
+            from { opacity: 0; transform: translateY(-9px) scaleY(.96); }
+            to   { opacity: 1; transform: translateY(0) scaleY(1); }
+        }
+        .theme-edit-row { display: flex; align-items: center; gap: 7px; }
+        .theme-edit-row input { flex: 1; min-width: 0; margin: 8px 0 !important; }
+        .theme-edit-row button {
+            flex: 0 0 auto; padding: 9px 17px; border: 0; border-radius: 7px;
+            background: #3b82f6; color: #fff; font-weight: 700; cursor: pointer;
+        }
+        .quiet-action-buttons button {
+            background: #e5e7eb !important; color: #475569 !important;
+            border: 1px solid #cbd5e1 !important;
+        }
+        .cat-bubble { transition: transform .3s ease; transform-origin: center bottom; }
         #adminCodeStatus { min-height: 1.2em; margin-top: 5px; font-size: .75rem; color: #64748b; }
         .code-input { -webkit-text-security: disc; text-security: disc; }
 
@@ -393,9 +413,11 @@
                 <details class="admin-section">
                     <summary>🎨 テーマの変更</summary>
                     <div class="admin-section-content">
-                        <label style="font-size:0.8rem; font-weight:bold;">新しいテーマ</label>
-                        <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
-                        <button id="btnChangeTheme" style="width:100%; margin-top:7px; background:#3b82f6; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">テーマを変更する</button>
+                        <label style="font-size:0.8rem; font-weight:bold; display:block; text-align:left;">新しいテーマ</label>
+                        <div class="theme-edit-row">
+                            <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
+                            <button id="btnChangeTheme" type="button">変更</button>
+                        </div>
                     </div>
                 </details>
 
@@ -421,11 +443,11 @@
                 </details>
 
                 <details class="admin-section">
-                    <summary>⚙️ 詳細設定</summary>
+                    <summary>⚙️ その他設定</summary>
                     <div class="admin-section-content">
-                        <div class="modal-btn-group" style="margin-top:8px;">
-                            <button id="btnClearCats" style="background:#f59e0b; color:white;">🐾 猫を解散（ぜんぶ逃がす）</button>
-                            <button id="btnDeleteRoom" style="background:#ef4444; color:white;">🏠 部屋を解散（TOPへ戻る）</button>
+                        <div class="modal-btn-group quiet-action-buttons" style="margin-top:8px;">
+                            <button id="btnClearCats">🐾 猫を解散（ぜんぶ逃がす）</button>
+                            <button id="btnDeleteRoom">🏠 部屋を解散（TOPへ戻る）</button>
                         </div>
                     </div>
                 </details>
@@ -564,8 +586,12 @@
         }
 
         function applyCatGrowth(catItem, likes) {
+            const scale = getCatGrowthScale(likes);
             const body = catItem?.querySelector('.cat-body-wrap');
-            if (body) body.style.transform = `scale(${getCatGrowthScale(likes)})`;
+            const bubble = catItem?.querySelector('.cat-bubble');
+            if (body) body.style.transform = `scale(${scale})`;
+            // 猫の頭が大きくなる分、吹き出しも上へ逃がして文字の重なりを防ぐ。
+            if (bubble) bubble.style.transform = `translateY(-${(scale - 1) * 2.8}rem)`;
         }
 
         // 現在の猫の位置を見て、空いているグリッド位置を優先して使う。
@@ -1246,6 +1272,12 @@
                     ghost.style.margin = '0';
                     ghost.style.pointerEvents = 'none';
                     ghost.style.zIndex = '2000';
+                    // 個別のサヨナラと同じ💦エフェクトを付ける。
+                    const sweat = document.createElement('div');
+                    sweat.className = 'sweat-mark';
+                    sweat.textContent = '💦';
+                    const ghostBody = ghost.querySelector('.cat-body-wrap');
+                    (ghostBody || ghost).appendChild(sweat);
                     document.body.appendChild(ghost);
                     return ghost;
                 });
@@ -1267,10 +1299,14 @@
 
                 oldCats.forEach((ghost, idx) => {
                     const d = fleeDirs[idx % fleeDirs.length];
-                    ghost.animate([
-                        { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
-                        { transform: `translate(${d.x * window.innerWidth * 0.8}px, ${d.y * window.innerHeight * 0.6}px) scale(.55) rotate(${d.rot}deg)`, opacity: 0 }
-                    ], { duration: 1800, easing: 'ease-in', fill: 'forwards' }).onfinish = () => ghost.remove();
+                    // 個別のサヨナラと同様、💦が出てから少し間を置いて逃げる。
+                    setTimeout(() => {
+                        if (!ghost.isConnected) return;
+                        ghost.animate([
+                            { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
+                            { transform: `translate(${d.x * window.innerWidth * 1.2}px, ${d.y * window.innerHeight * 0.7}px) scale(.6) rotate(${d.rot}deg)`, opacity: 0 }
+                        ], { duration: 2100, easing: 'ease-in', fill: 'forwards' }).onfinish = () => ghost.remove();
+                    }, 500);
                 });
                 showToast('猫たちがみんな帰りました 🐾');
                 // 解散直後から新しい猫を追加できるようにする。
