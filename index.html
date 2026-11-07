@@ -462,7 +462,11 @@
             user-select: none;
             -webkit-user-drag: none;
             pointer-events: none;
+            /* 読み込み途中の画像を見せず、全体が読み込めてから表示 */
+            opacity: 0;
+            transition: opacity .12s ease;
         }
+        .cat-avatar.is-loaded { opacity: 1; }
         .cat-avatar.is-happy {
             animation: catHappyPop 0.16s ease-out;
         }
@@ -666,6 +670,23 @@
             'black', 'cream', 'gray', 'kiji_tabby', 'longhair',
             'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
         ];
+
+        // 猫画像18枚（9種類×通常/うれしい）を先読みして、表示時の待ち時間を減らす。
+        // 先読みは画面表示を止めず、ブラウザのキャッシュを利用する。
+        const catImagePreloadCache = new Map();
+        function preloadCatImages() {
+            for (const type of catTypes) {
+                for (const expression of ['normal', 'happy']) {
+                    const src = `neko_icon/cat_${type}_${expression}.png`;
+                    if (catImagePreloadCache.has(src)) continue;
+                    const image = new Image();
+                    image.decoding = 'async';
+                    image.src = src;
+                    catImagePreloadCache.set(src, image);
+                }
+            }
+        }
+        preloadCatImages();
         const randomThemes = [
             "今日あったうれしい事",
             "あした晴れるかな？",
@@ -852,11 +873,20 @@
                 img.className = 'cat-avatar';
                 img.alt = 'ねこ';
                 img.draggable = false;
+                img.decoding = 'async';
+                img.addEventListener('load', () => img.classList.add('is-loaded'));
+                img.addEventListener('error', () => img.classList.remove('is-loaded'));
                 body.replaceChildren(img);
             }
 
             if (catItem.dataset.appearance !== appearanceKey) {
-                img.src = `neko_icon/cat_${catType}_${expression}.png`;
+                const imageSrc = `neko_icon/cat_${catType}_${expression}.png`;
+                img.classList.remove('is-loaded');
+                img.src = imageSrc;
+                // 先読み済みで既にキャッシュされている場合は即時表示する。
+                if (img.complete && img.naturalWidth > 0) {
+                    img.classList.add('is-loaded');
+                }
                 img.classList.toggle('is-happy', isHappy);
                 catItem.dataset.appearance = appearanceKey;
             }
