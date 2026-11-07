@@ -85,11 +85,32 @@
         }
 
         header h1 { margin: 0; font-size: 1.1rem; }
-        header .settings-btn {
-            background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4);
-            color: white; padding: 5px 12px; border-radius: 15px; cursor: pointer; font-size: 0.85rem;
+        .header-actions { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
+        header .settings-btn, header .share-btn {
+            border: 1px solid rgba(255,255,255,0.9);
+            background: #ffffff;
+            color: #78350f;
+            padding: 7px 12px;
+            border-radius: 16px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 700;
+            line-height: 1.2;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.12);
+            opacity: 1;
         }
-        header .settings-btn:hover { background: rgba(255,255,255,0.4); }
+        header .share-btn { color: #1d4ed8; }
+        header .settings-btn:hover, header .share-btn:hover {
+            background: #f8fafc;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.18);
+        }
+        header .settings-btn:active, header .share-btn:active { transform: translateY(1px); }
+        @media (max-width: 440px) {
+            header { padding: 0 9px; }
+            header h1 { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+            .header-actions { gap: 5px; }
+            header .settings-btn, header .share-btn { padding: 7px 8px; font-size: .75rem; }
+        }
 
         .hidden { display: none !important; }
         html.room-link #lobby { display: none !important; }
@@ -246,6 +267,18 @@
         @keyframes sweatPop { 0% { transform: scale(0); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
         @keyframes sweatBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.2; } }
 
+        #roomShareModal { z-index: 2000; }
+        #roomQrModal { z-index: 2100; }
+        .share-section { margin: 0; padding: 12px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; text-align: left; }
+        .share-section h4 { margin: 0 0 5px; color: #1d4ed8; font-size: .95rem; }
+        .share-section p { margin: 0 0 10px; color: #475569; font-size: .78rem; line-height: 1.5; }
+        .share-actions { display: flex; gap: 8px; }
+        .share-actions button { flex: 1; min-width: 0; padding: 10px 7px; border: 0; border-radius: 8px; background: #2563eb; color: white; font-weight: bold; cursor: pointer; }
+        .share-actions button.secondary { background: #64748b; }
+        .share-status { min-height: 1.1em; margin-top: 7px; color: #1d4ed8; font-size: .75rem; }
+        .qr-image { display: block; width: 220px; height: 220px; max-width: 100%; margin: 12px auto; image-rendering: pixelated; }
+        .share-url { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 7px; background: #f8fafc; color: #334155; font-size: .75rem; overflow-wrap: anywhere; }
+
         .cat-bubble {
             background: #ffffff; border: 2px solid var(--border-color); border-radius: 18px;
             padding: 8px 12px; box-shadow: 0 6px 15px rgba(0,0,0,0.08); display: flex;
@@ -324,13 +357,134 @@
         .cat-manage-item { display: flex; justify-content: space-between; align-items: center; padding: 6px; border-bottom: 1px solid #f3f4f6; font-size: 0.8rem; gap: 6px; }
         .cat-manage-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
         .cat-manage-item button { padding: 3px 8px; font-size: 0.75rem; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; }
+    
+    
+        /* 部屋ごとのテーマカラーに合わせた共有・設定ボタン */
+        header .share-btn,
+        header .settings-btn {
+            color: var(--header-cat);
+            transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        header .share-btn:hover,
+        header .settings-btn:hover {
+            background: #f8fffc;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
+        }
+
+        /* 共有画面のボタンは白抜き＋部屋のテーマカラーの縁取り */
+        .share-actions button,
+        .share-actions button.secondary {
+            background: #ffffff;
+            color: var(--button-cat);
+            border: 2px solid var(--button-cat);
+            transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .share-actions button:hover,
+        .share-actions button.secondary:hover {
+            background: var(--bg-start);
+            box-shadow: 0 3px 7px rgba(0, 0, 0, 0.14);
+        }
+
+        /* 押した瞬間に沈み込む。押下中のtransformには遅延をつけない */
+        header .share-btn:active,
+        header .settings-btn:active,
+        .share-actions button:active,
+        .share-actions button.secondary:active {
+            transform: translateY(2px) scale(0.96);
+            transition-duration: 0s;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.18);
+            filter: brightness(0.96);
+        }
+
+        header .share-btn:focus-visible,
+        header .settings-btn:focus-visible,
+        .share-actions button:focus-visible {
+            outline: 3px solid var(--border-color);
+            outline-offset: 2px;
+        }
+
+    
+        /* 共有ボタン：テーマカラーで塗りつぶし、文字は白 */
+        .share-actions button,
+        .share-actions button.secondary {
+            background: var(--button-cat);
+            color: #ffffff;
+            border: 2px solid var(--button-cat);
+            transition: background-color 0.08s linear, box-shadow 0.08s linear, transform 0.05s linear;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            user-select: none;
+        }
+
+        .share-actions button:hover,
+        .share-actions button.secondary:hover {
+            background: var(--button-hover);
+            border-color: var(--button-hover);
+            color: #ffffff;
+        }
+
+        /* 猫を追加ボタンにも押下フィードバック */
+        .post-container button {
+            transition: background-color 0.08s linear, box-shadow 0.08s linear, transform 0.05s linear;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            user-select: none;
+        }
+
+        .post-container button:hover {
+            background-color: var(--button-hover);
+        }
+
+        /* タップした瞬間に反応。押下中はアニメーション待ちを発生させない */
+        .share-actions button:active,
+        .share-actions button.secondary:active,
+        .post-container button:active,
+        header .share-btn:active,
+        header .settings-btn:active {
+            transform: translateY(2px) scale(0.96);
+            transition: none;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.22);
+            filter: brightness(0.92);
+        }
+
+    
+        .cat-avatar {
+            display: block;
+            width: 76px;
+            height: 76px;
+            object-fit: contain;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
+        }
+        .cat-avatar.is-happy {
+            animation: catHappyPop 0.16s ease-out;
+        }
+        @keyframes catHappyPop {
+            0% { transform: scale(0.88); }
+            70% { transform: scale(1.08); }
+            100% { transform: scale(1); }
+        }
+        @media (max-width: 480px) {
+            .cat-avatar { width: 72px; height: 72px; }
+        }
+
     </style>
 </head>
 <body>
 
     <header>
         <h1 id="headerTitle">🐾 猫の散歩道</h1>
-        <button id="settingsBtn" class="settings-btn hidden">⚙️ 設定</button>
+        <div class="header-actions">
+            <button id="roomShareBtn" class="share-btn hidden" type="button">🔗 部屋を共有</button>
+            <button id="settingsBtn" class="settings-btn hidden" type="button">⚙️ 設定</button>
+        </div>
     </header>
 
     <div id="lobby">
@@ -346,12 +500,12 @@
         <div class="form-group">
             <label>3. 1日のおさかな上限</label>
             <select id="inFishLimit">
-                <option value="3">🐟 3匹（標準）</option>
+                <option value="3">🐟 3匹</option>
                 <option value="1">🐟 1匹</option>
                 <option value="5">🐟 5匹</option>
                 <option value="7">🐟 7匹</option>
                 <option value="10">🐟 10匹</option>
-                <option value="999">♾️ 無限</option>
+                <option value="999" selected>♾️ 無限</option>
             </select>
         </div>
         <div class="form-group">
@@ -405,7 +559,8 @@
     <div id="settingsModal" class="modal hidden">
         <div class="modal-content">
             <h3>⚙️ 部屋の設定</h3>
-            <p style="font-size:0.8rem; color:#666;">操作には4桁の管理コードが必要です</p>
+
+            <p style="font-size:0.8rem; color:#666;">部屋の管理操作には4桁の管理コードが必要です</p>
             <input type="text" id="modalCode" class="code-input" placeholder="管理コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
 
             <div id="adminCodeStatus">管理コードを入力すると、下の設定を操作できます。</div>
@@ -471,13 +626,46 @@
         </div>
     </div>
 
+    <div id="roomShareModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="roomShareTitle">
+        <div class="modal-content">
+            <h3 id="roomShareTitle">🔗 友達と部屋を共有</h3>
+            <section class="share-section" aria-label="友達と共有">
+                <p>この部屋専用のURLを友達に送ると、同じ広場に参加できます。</p>
+                <div id="shareRoomUrl" class="share-url"></div>
+                <div class="share-actions" style="margin-top:8px;">
+                    <button id="btnCopyRoomUrl" type="button">📋 URLをコピー</button>
+                    <button id="btnShowRoomQr" class="secondary" type="button">▦ QRコード</button>
+                </div>
+                <div id="shareStatus" class="share-status" aria-live="polite"></div>
+            </section>
+            <div class="modal-btn-group">
+                <button id="btnCloseShareModal" style="background:#e5e7eb; color:#333;">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="roomQrModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="roomQrTitle">
+        <div class="modal-content">
+            <h3 id="roomQrTitle">📱 部屋をQRコードで共有</h3>
+            <p style="font-size:.8rem; color:#64748b;">友達に読み取ってもらうと、この部屋に参加できます。</p>
+            <img id="roomQrImage" class="qr-image" alt="この部屋に参加するためのQRコード">
+            <div id="roomQrUrl" class="share-url"></div>
+            <div class="modal-btn-group">
+                <button id="btnCloseRoomQr" style="background:#e5e7eb; color:#333;">閉じる</button>
+            </div>
+        </div>
+    </div>
+
     <div class="support-box">
         <div class="support-text">サーバー代のご支援いただけると、大変たすかりますニャ🐱</div>
         <a class="ofuse-btn" href="https://ofuse.me/o?uid=231659" target="_blank" rel="noopener noreferrer">💙 OFUSEで応援を送る</a>
     </div>
 
     <script>
-        const catIcons = ['🐱', '😸', '😺', '😻', '😼', '😽', '🙀', '😿', '😾', '🐈', '🐈‍⬛'];
+        const catTypes = [
+            'black', 'cream', 'gray', 'kiji_tabby', 'longhair',
+            'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
+        ];
         const randomThemes = [
             "今日あったうれしい事",
             "あした晴れるかな？",
@@ -628,6 +816,71 @@
             return best || { x: 20, y: 20 };
         }
 
+        // 通常の猫は、猫種ごとの画像を表示する。既存データにcat_typeがない場合も
+        // IDから決定的に選ぶため、同じ猫は参加者全員の画面で同じ見た目になる。
+        function getCatType(item, key) {
+            if (item.cat_type && catTypes.includes(item.cat_type)) return item.cat_type;
+            let hash = 0;
+            for (let i = 0; i < String(key).length; i++) {
+                hash = (hash * 31 + String(key).charCodeAt(i)) | 0;
+            }
+            return catTypes[Math.abs(hash) % catTypes.length];
+        }
+
+        function updateCatAppearance(catItem, item, key) {
+            const body = catItem.querySelector('.cat-body-wrap');
+            if (!body) return;
+
+            const isSecret = secretAnimals.some(animal => animal.icon === item.icon);
+            if (isSecret) {
+                if (catItem.dataset.appearance !== `secret:${item.icon}`) {
+                    body.replaceChildren(document.createTextNode(item.icon));
+                    catItem.dataset.appearance = `secret:${item.icon}`;
+                }
+                return;
+            }
+
+            const catType = getCatType(item, key);
+            const happyUntil = Number(item.happy_until) || 0;
+            const isHappy = happyUntil > Date.now();
+            const expression = isHappy ? 'happy' : 'normal';
+            const appearanceKey = `${catType}:${expression}`;
+
+            let img = body.querySelector('img.cat-avatar');
+            if (!img) {
+                img = document.createElement('img');
+                img.className = 'cat-avatar';
+                img.alt = 'ねこ';
+                img.draggable = false;
+                body.replaceChildren(img);
+            }
+
+            if (catItem.dataset.appearance !== appearanceKey) {
+                img.src = `neko_icon/cat_${catType}_${expression}.png`;
+                img.classList.toggle('is-happy', isHappy);
+                catItem.dataset.appearance = appearanceKey;
+            }
+
+            // サーバー更新を受け取った側でも、happy表示が期限切れになったらnormalへ戻す。
+            if (isHappy && catItem.dataset.happyTimer !== String(happyUntil)) {
+                catItem.dataset.happyTimer = String(happyUntil);
+                const expectedUntil = happyUntil;
+                setTimeout(() => {
+                    if (!catItem.isConnected) return;
+                    if (Number(catItem.dataset.happyTimer) !== expectedUntil) return;
+                    if (Date.now() < expectedUntil) {
+                        setTimeout(() => updateCatAppearance(catItem, item, key),
+                            expectedUntil - Date.now() + 20);
+                        return;
+                    }
+                    const current = comments.find((cat, i) =>
+                        String(cat.id ?? `legacy-${i}`) === String(key)
+                    );
+                    if (current) updateCatAppearance(catItem, current, key);
+                }, Math.max(0, happyUntil - Date.now()) + 20);
+            }
+        }
+
         function renderComments() {
             const stage = document.getElementById('stage');
             const stageWidth = stage.clientWidth || window.innerWidth;
@@ -715,6 +968,9 @@
                         }
 
                         currentItem.likes = (Number(currentItem.likes) || 0) + 1;
+                        // ほかの参加者にもhappy画像を同期できるよう、期限をデータに含める。
+                        currentItem.happy_until = Date.now() + 1600;
+                        updateCatAppearance(catItem, currentItem, catItem.dataset.catKey);
 
                         const countEl = catItem.querySelector('.like-count');
                         if (countEl) countEl.textContent = currentItem.likes;
@@ -732,8 +988,7 @@
                 if (Number.isFinite(Number(item.x))) catItem.style.left = Number(item.x) + 'px';
                 if (Number.isFinite(Number(item.y))) catItem.style.top = Number(item.y) + 'px';
 
-                const icon = item.icon || catIcons[index % catIcons.length];
-                const isSecret = secretAnimals.some(sa => sa.icon === icon);
+                const isSecret = secretAnimals.some(sa => sa.icon === item.icon);
                 const likeIcon = isSecret ? '❤️' : '🐟';
                 const pinMark = item.pinned ? '📌 ' : '';
 
@@ -748,10 +1003,7 @@
                     bubbleText.title = item.text;
                 }
 
-                if (body && catItem.dataset.icon !== icon) {
-                    body.textContent = icon;
-                    catItem.dataset.icon = icon;
-                }
+                if (body) updateCatAppearance(catItem, item, key);
 
                 if (footer) {
                     footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
@@ -817,13 +1069,55 @@
                 const serverClearVersion = Number(res.headers.get('X-Clear-Version'));
                 if (Number.isFinite(serverClearVersion)) roomClearVersion = serverClearVersion;
                 if (pendingSaves > 0 || dragState) return;
+
                 const snapshot = JSON.stringify(newComments);
-                if (snapshot !== lastServerSnapshot && snapshot !== JSON.stringify(comments)) {
-                    comments = newComments;
-                    lastServerSnapshot = snapshot;
+                if (snapshot === lastServerSnapshot || snapshot === JSON.stringify(comments)) return;
+
+                // 他の参加者がサヨナラさせた猫を検知し、こちらの画面でも逃走演出を再生する。
+                const newIds = new Set(newComments.map((cat, i) => String(cat.id ?? `legacy-${i}`)));
+                const removedCats = comments
+                    .map((cat, i) => ({ cat, id: String(cat.id ?? `legacy-${i}`), index: i }))
+                    .filter(entry => !newIds.has(entry.id));
+
+                const animatedElements = removedCats
+                    .map(entry => ({
+                        ...entry,
+                        element: Array.from(document.querySelectorAll('.cat-item'))
+                            .find(el => el.dataset.catKey === entry.id)
+                    }))
+                    .filter(entry => entry.element);
+
+                if (animatedElements.length > 0) {
+                    isAnimating = true;
+                    animatedElements.forEach((entry, i) => fleeCat(entry.element, entry.index + i));
+
+                    // fleeCatは💦表示後に逃げ始め、約2.1秒かけて画面外へ移動する。
+                    await new Promise(resolve => setTimeout(resolve, 2650));
+
+                    // 演出中に別の変更が入っている可能性があるため、最新状態を取り直す。
+                    const latestRes = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                    if (latestRes.ok) {
+                        const latestComments = await latestRes.json();
+                        const latestVersion = Number(latestRes.headers.get('X-Clear-Version'));
+                        if (Number.isFinite(latestVersion)) roomClearVersion = latestVersion;
+                        comments = latestComments;
+                        lastServerSnapshot = JSON.stringify(latestComments);
+                    } else {
+                        comments = newComments;
+                        lastServerSnapshot = snapshot;
+                    }
+                    isAnimating = false;
                     renderComments();
+                    return;
                 }
-            } catch (e) { /* 一時的な通信失敗は次回ポーリングで再試行 */ }
+
+                comments = newComments;
+                lastServerSnapshot = snapshot;
+                renderComments();
+            } catch (e) {
+                isAnimating = false;
+                /* 一時的な通信失敗は次回ポーリングで再試行 */
+            }
         }
 
         // 同一ブラウザからの保存を必ず直列化し、古いスナップショットの後着を防ぐ
@@ -962,6 +1256,7 @@
                 id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
                 text: cleanText || rawText,
                 icon: targetIcon,
+                cat_type: targetIcon ? null : catTypes[Math.floor(Math.random() * catTypes.length)],
                 likes: 0,
                 pinned: false,
                 ...findOpenCatPosition(stage)
@@ -1015,6 +1310,19 @@
             updateAdminControlsUI();
             updateCatAdditionUI();
             modal.classList.remove('hidden');
+        });
+
+        const roomShareModal = document.getElementById('roomShareModal');
+        document.getElementById('roomShareBtn').addEventListener('click', () => {
+            updateRoomShareUrl();
+            document.getElementById('shareStatus').textContent = '';
+            roomShareModal.classList.remove('hidden');
+        });
+        document.getElementById('btnCloseShareModal').addEventListener('click', () => {
+            roomShareModal.classList.add('hidden');
+        });
+        roomShareModal.addEventListener('click', (e) => {
+            if (e.target === roomShareModal) roomShareModal.classList.add('hidden');
         });
 
         document.getElementById('btnCloseModal').addEventListener('click', () => {
@@ -1343,6 +1651,56 @@
             }
         });
 
+        // 部屋専用URLの共有（コピー／QRコード）
+        function getRoomShareUrl() {
+            return window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom || '');
+        }
+
+        function updateRoomShareUrl() {
+            const url = getRoomShareUrl();
+            const display = document.getElementById('shareRoomUrl');
+            if (display) display.textContent = url;
+            return url;
+        }
+
+        document.getElementById('btnCopyRoomUrl').addEventListener('click', async () => {
+            const url = updateRoomShareUrl();
+            const status = document.getElementById('shareStatus');
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(url);
+                } else {
+                    const temp = document.createElement('textarea');
+                    temp.value = url;
+                    temp.style.position = 'fixed';
+                    temp.style.opacity = '0';
+                    document.body.appendChild(temp);
+                    temp.select();
+                    const copied = document.execCommand('copy');
+                    temp.remove();
+                    if (!copied) throw new Error('copy failed');
+                }
+                status.textContent = 'URLをコピーしました！友達に送ってね 🐾';
+            } catch (_) {
+                status.textContent = 'コピーできませんでした。URLを選択してコピーしてください。';
+            }
+        });
+
+        const roomQrModal = document.getElementById('roomQrModal');
+        document.getElementById('btnShowRoomQr').addEventListener('click', () => {
+            const url = updateRoomShareUrl();
+            document.getElementById('roomQrUrl').textContent = url;
+            // QR画像は外部QR生成サービスで作成。部屋URL以外の情報は送信しない。
+            document.getElementById('roomQrImage').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=' + encodeURIComponent(url);
+            roomQrModal.classList.remove('hidden');
+        });
+        document.getElementById('btnCloseRoomQr').addEventListener('click', () => {
+            roomQrModal.classList.add('hidden');
+        });
+        roomQrModal.addEventListener('click', (e) => {
+            if (e.target === roomQrModal) roomQrModal.classList.add('hidden');
+        });
+
         function escapeHTML(str) {
             return String(str).replace(/[&<>'"]/g, tag => ({
                 '&': '&amp;',
@@ -1367,8 +1725,10 @@
                 document.getElementById('lobby').classList.add('hidden');
                 document.getElementById('roomView').classList.remove('hidden');
                 document.getElementById('settingsBtn').classList.remove('hidden');
+                document.getElementById('roomShareBtn').classList.remove('hidden');
 
                 document.getElementById('headerTitle').textContent = `🐾 ${info.name}`;
+                updateRoomShareUrl();
                 document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
 
                 applyColorTheme(info.color);
