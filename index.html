@@ -116,6 +116,11 @@
         html.room-link #lobby { display: none !important; }
         html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
         html.room-link #roomView:not(.hidden) { visibility: visible; }
+
+        /* 部屋URLでは、部屋情報と初回データが整うまで黄色い初期画面を描画しない */
+        html.room-link { background: #ffffff; }
+        html.room-link body { visibility: hidden; }
+        html.room-link.room-ready body { visibility: visible; }
         .cat-item { touch-action: none !important; }
         .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
         .cat-body-wrap { transform-origin: center bottom; transition: transform .3s ease; }
@@ -1771,6 +1776,11 @@
                 updateFishBadgeDisplay();
 
                 await fetchComments();
+
+                // テーマ適用・初回データ描画が終わってから画面を一度に表示する。
+                // これにより初期の黄色背景や、部屋切替時の一瞬のちらつきを防ぐ。
+                document.documentElement.classList.add('room-ready');
+
                 setInterval(fetchComments, 1200);
             }
         }
