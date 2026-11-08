@@ -195,6 +195,22 @@
             outline: none; font-size: 16px; box-sizing: border-box;
         }
         .form-group input:focus { border-color: var(--button-cat); }
+        /* TOP画面の選択欄は、無効状態に見えないよう白背景ではっきり表示 */
+        #inFishLimit, #inColor {
+            background-color: #ffffff;
+            color: #334155;
+            opacity: 1;
+            cursor: pointer;
+            -webkit-appearance: menulist;
+            appearance: auto;
+        }
+        #inFishLimit option, #inColor option {
+            background-color: #ffffff;
+            color: #334155;
+        }
+        #inFishLimit:focus, #inColor:focus {
+            border-color: var(--button-cat);
+        }
 
         #createRoomBtn {
             width: 100%; background-color: var(--button-cat); color: white; border: none;
@@ -506,7 +522,7 @@
             <input type="text" id="inName" placeholder="空欄なら「もふもふ広場」" maxlength="20">
         </div>
         <div class="form-group">
-            <label>2. テーマ</label>
+            <label>2. お話のテーマ</label>
             <input type="text" id="inTheme" placeholder="空欄ならランダムテーマ" maxlength="30">
         </div>
         <div class="form-group">
