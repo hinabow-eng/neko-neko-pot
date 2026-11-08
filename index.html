@@ -115,7 +115,8 @@
         .hidden { display: none !important; }
         html.room-link #lobby { display: none !important; }
         html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
-        html.room-link #roomView:not(.hidden) { visibility: visible; }
+        html.room-link body { visibility: hidden; }
+        html.room-link body.room-ready { visibility: visible; }
         .cat-item { touch-action: none !important; }
         .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
         .cat-body-wrap { transform-origin: center bottom; transition: transform .3s ease; }
@@ -715,6 +716,22 @@
         let isClearingCats = false;
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
+
+        // 部屋URLが分かった時点でQR画像を先読み。ボタンを押したときはキャッシュ済み画像を表示する。
+        let roomQrReady = Promise.resolve(false);
+        function prepareRoomQr() {
+            if (!currentRoom) return roomQrReady;
+            const url = window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom);
+            const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=' + encodeURIComponent(url);
+            const qrImage = document.getElementById('roomQrImage');
+            qrImage.src = qrUrl;
+            roomQrReady = new Promise(resolve => {
+                if (qrImage.complete && qrImage.naturalWidth > 0) return resolve(true);
+                qrImage.onload = () => resolve(true);
+                qrImage.onerror = () => resolve(false);
+            });
+            return roomQrReady;
+        }
 
         function applyColorTheme(color) {
             document.body.className = '';
@@ -1765,12 +1782,17 @@
         });
 
         const roomQrModal = document.getElementById('roomQrModal');
-        document.getElementById('btnShowRoomQr').addEventListener('click', () => {
+        document.getElementById('btnShowRoomQr').addEventListener('click', async () => {
             const url = updateRoomShareUrl();
             document.getElementById('roomQrUrl').textContent = url;
-            // QR画像は外部QR生成サービスで作成。部屋URL以外の情報は送信しない。
-            document.getElementById('roomQrImage').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=' + encodeURIComponent(url);
+            // 部屋読み込み時に先読み済み。通信中なら画像が準備できてから開く。
             roomQrModal.classList.remove('hidden');
+            const ready = await roomQrReady;
+            if (!ready) {
+                // 通信失敗時のみ再試行できるようにする。
+                const qrImage = document.getElementById('roomQrImage');
+                qrImage.src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=' + encodeURIComponent(url);
+            }
         });
         document.getElementById('btnCloseRoomQr').addEventListener('click', () => {
             roomQrModal.classList.add('hidden');
@@ -1791,6 +1813,8 @@
 
         async function init() {
             if (currentRoom) {
+                // QR生成と部屋情報取得を並行して開始する。
+                prepareRoomQr();
                 const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
                 const info = await res.json();
 
@@ -1819,6 +1843,8 @@
                 updateFishBadgeDisplay();
 
                 await fetchComments();
+                document.documentElement.classList.add('room-ready');
+                document.body.classList.add('room-ready');
                 setInterval(fetchComments, 1200);
             }
         }
