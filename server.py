@@ -9,7 +9,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 
 try:
     import fcntl  # Linux / Mac（Renderはここ）。Windowsには無いので、その場合は下のthreading.Lockだけ使う
@@ -112,7 +112,63 @@ def generate_room_id(db):
 
 @app.route('/')
 def index():
-    return send_from_directory(BASE_DIR, 'index.html')
+    room_id = request.args.get('room', '').strip()
+
+    # 通常のTOPアクセスは従来どおり静的ファイル配信。
+    if not room_id:
+        return send_from_directory(BASE_DIR, 'index.html')
+
+    # 部屋リンクでは、初回HTMLに公開用の部屋情報を埋め込む。
+    # ブラウザ側の /api/room_info 追加通信をなくして初期表示を早める。
+    try:
+        db = load_db()
+        room = db.get(room_id)
+        if room:
+            info = room.get('info', {})
+            initial_info = {
+                'exists': True,
+                'name': info.get('name', ''),
+                'theme': info.get('theme', ''),
+                'color': info.get('color', 'yellow'),
+                'fish_limit': info.get('fish_limit', 3),
+                'max_cats': info.get('max_cats', 20),
+                'cat_addition_disabled': bool(
+                    info.get('cat_addition_disabled', False)
+                )
+            }
+        else:
+            initial_info = {'exists': False}
+
+        html_path = os.path.join(BASE_DIR, 'index.html')
+        with open(html_path, 'r', encoding='utf-8') as f:
+            page = f.read()
+
+        payload = json.dumps(initial_info, ensure_ascii=False)
+        # script要素内への不正なHTML混入を防ぐ。
+        payload = (payload.replace('&', '\\u0026')
+                          .replace('<', '\\u003c')
+                          .replace('>', '\\u003e'))
+
+        placeholder = '<script id="room-bootstrap-data" type="application/json">null</script>'
+        if placeholder not in page:
+            # HTMLが古い場合でもページ自体は返し、JS側のAPIフォールバックを使う。
+            response = Response(page, mimetype='text/html')
+        else:
+            page = page.replace(
+                placeholder,
+                '<script id="room-bootstrap-data" type="application/json">'
+                + payload +
+                '</script>',
+                1
+            )
+            response = Response(page, mimetype='text/html')
+
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    except Exception:
+        # 一時的な読み込みエラー時は通常HTMLを返し、JS側のAPI経由で復旧を試みる。
+        return send_from_directory(BASE_DIR, 'index.html')
 
 
 # ==========================================
