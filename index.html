@@ -116,11 +116,6 @@
         html.room-link #lobby { display: none !important; }
         html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
         html.room-link #roomView:not(.hidden) { visibility: visible; }
-
-        /* 部屋URLでは、部屋情報と初回データが整うまで黄色い初期画面を描画しない */
-        html.room-link { background: #ffffff; }
-        html.room-link body { visibility: hidden; }
-        html.room-link.room-ready body { visibility: visible; }
         .cat-item { touch-action: none !important; }
         .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
         .cat-body-wrap { transform-origin: center bottom; transition: transform .3s ease; }
@@ -461,17 +456,13 @@
     
         .cat-avatar {
             display: block;
-            width: 76px;
-            height: 76px;
+            width: 45px;
+            height: 45px;
             object-fit: contain;
             user-select: none;
             -webkit-user-drag: none;
             pointer-events: none;
-            /* 読み込み途中の画像を見せず、全体が読み込めてから表示 */
-            opacity: 0;
-            transition: opacity .12s ease;
         }
-        .cat-avatar.is-loaded { opacity: 1; }
         .cat-avatar.is-happy {
             animation: catHappyPop 0.16s ease-out;
         }
@@ -481,7 +472,7 @@
             100% { transform: scale(1); }
         }
         @media (max-width: 480px) {
-            .cat-avatar { width: 72px; height: 72px; }
+            .cat-avatar { width: 45px; height: 45px; }
         }
 
     </style>
@@ -675,23 +666,6 @@
             'black', 'cream', 'gray', 'kiji_tabby', 'longhair',
             'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
         ];
-
-        // 猫画像18枚（9種類×通常/うれしい）を先読みして、表示時の待ち時間を減らす。
-        // 先読みは画面表示を止めず、ブラウザのキャッシュを利用する。
-        const catImagePreloadCache = new Map();
-        function preloadCatImages() {
-            for (const type of catTypes) {
-                for (const expression of ['normal', 'happy']) {
-                    const src = `neko_icon/cat_${type}_${expression}.png`;
-                    if (catImagePreloadCache.has(src)) continue;
-                    const image = new Image();
-                    image.decoding = 'async';
-                    image.src = src;
-                    catImagePreloadCache.set(src, image);
-                }
-            }
-        }
-        preloadCatImages();
         const randomThemes = [
             "今日あったうれしい事",
             "あした晴れるかな？",
@@ -878,20 +852,11 @@
                 img.className = 'cat-avatar';
                 img.alt = 'ねこ';
                 img.draggable = false;
-                img.decoding = 'async';
-                img.addEventListener('load', () => img.classList.add('is-loaded'));
-                img.addEventListener('error', () => img.classList.remove('is-loaded'));
                 body.replaceChildren(img);
             }
 
             if (catItem.dataset.appearance !== appearanceKey) {
-                const imageSrc = `neko_icon/cat_${catType}_${expression}.png`;
-                img.classList.remove('is-loaded');
-                img.src = imageSrc;
-                // 先読み済みで既にキャッシュされている場合は即時表示する。
-                if (img.complete && img.naturalWidth > 0) {
-                    img.classList.add('is-loaded');
-                }
+                img.src = `neko_icon/cat_${catType}_${expression}.png`;
                 img.classList.toggle('is-happy', isHappy);
                 catItem.dataset.appearance = appearanceKey;
             }
@@ -914,6 +879,31 @@
                     if (current) updateCatAppearance(catItem, current, key);
                 }, Math.max(0, happyUntil - Date.now()) + 20);
             }
+        }
+
+        // 位置はステージ内の割合(rx/ry)でも保持し、画面サイズが変わっても同じ相対位置に置く。
+        // x/yは既存サーバーとの互換性のため、現在の画面上のpx値として維持する。
+        function applyResponsiveCatPosition(item, catItem, stage) {
+            const width = stage.clientWidth || window.innerWidth;
+            const height = stage.clientHeight || 400;
+            const maxX = Math.max(0, width - (catItem.offsetWidth || 45));
+            const maxY = Math.max(0, height - (catItem.offsetHeight || 45));
+
+            if (!Number.isFinite(Number(item.rx))) {
+                const oldX = Number.isFinite(Number(item.x)) ? Number(item.x) : 0;
+                item.rx = width > 0 ? oldX / width : 0.5;
+            }
+            if (!Number.isFinite(Number(item.ry))) {
+                const oldY = Number.isFinite(Number(item.y)) ? Number(item.y) : 0;
+                item.ry = height > 0 ? oldY / height : 0.5;
+            }
+
+            const x = Math.max(0, Math.min(maxX, Number(item.rx) * width));
+            const y = Math.max(0, Math.min(maxY, Number(item.ry) * height));
+            catItem.style.left = x + 'px';
+            catItem.style.top = y + 'px';
+            item.x = x;
+            item.y = y;
         }
 
         function renderComments() {
@@ -951,8 +941,8 @@
 
                     const initialX = Number.isFinite(Number(item.x)) ? Number(item.x) : (c * cellWidth + randomX);
                     const initialY = Number.isFinite(Number(item.y)) ? Number(item.y) : (r * cellHeight + randomY);
-                    item.x = initialX;
-                    item.y = initialY;
+                    if (!Number.isFinite(Number(item.rx))) item.rx = initialX / Math.max(1, stageWidth);
+                    if (!Number.isFinite(Number(item.ry))) item.ry = initialY / Math.max(1, stageHeight);
                     catItem.style.left = initialX + 'px';
                     catItem.style.top = initialY + 'px';
 
@@ -1019,9 +1009,8 @@
                     attachCatDrag(catItem);
                 }
 
-                // 保存済み位置がある猫は、再描画後も同じ場所に置く
-                if (Number.isFinite(Number(item.x))) catItem.style.left = Number(item.x) + 'px';
-                if (Number.isFinite(Number(item.y))) catItem.style.top = Number(item.y) + 'px';
+                // 画面幅・高さに応じて相対位置をpxへ変換し、ステージ外にはみ出さないようにする。
+                applyResponsiveCatPosition(item, catItem, stage);
 
                 const isSecret = secretAnimals.some(sa => sa.icon === item.icon);
                 const likeIcon = isSecret ? '❤️' : '🐟';
@@ -1253,6 +1242,9 @@
                     if (idx >= 0) {
                         comments[idx].x = parseFloat(catItem.style.left) || 0;
                         comments[idx].y = parseFloat(catItem.style.top) || 0;
+                        const stage = document.getElementById('stage');
+                        comments[idx].rx = comments[idx].x / Math.max(1, stage.clientWidth);
+                        comments[idx].ry = comments[idx].y / Math.max(1, stage.clientHeight);
                         suppressNextCatClick = true;
                         saveToServer();
                     }
@@ -1776,14 +1768,18 @@
                 updateFishBadgeDisplay();
 
                 await fetchComments();
-
-                // テーマ適用・初回データ描画が終わってから画面を一度に表示する。
-                // これにより初期の黄色背景や、部屋切替時の一瞬のちらつきを防ぐ。
-                document.documentElement.classList.add('room-ready');
-
                 setInterval(fetchComments, 1200);
             }
         }
+
+        // スマホの回転やPC/スマホ間の画面サイズ変更時に、猫を相対位置で再配置する。
+        let resizeRenderTimer = null;
+        window.addEventListener('resize', () => {
+            if (resizeRenderTimer) clearTimeout(resizeRenderTimer);
+            resizeRenderTimer = setTimeout(() => {
+                if (!dragState && currentRoom) renderComments();
+            }, 120);
+        });
 
         window.addEventListener('load', init);
     </script>
