@@ -728,7 +728,7 @@
         let isAnimating = false;
         let isClearingCats = false;
         const urlParams = new URLSearchParams(window.location.search);
-        const currentRoom = urlParams.get('room');
+        let currentRoom = urlParams.get('room');
         let currentRoomColor = urlParams.get('color') || 'yellow';
 
         // 部屋URLが分かった時点でQR画像を先読み。ボタンを押したときはキャッシュ済み画像を表示する。
@@ -799,18 +799,39 @@
                 return;
             }
 
-            const res = await fetch('/api/create_room', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, theme, code, color, fish_limit: fishLimit })
-            });
+            const createButton = document.getElementById('createRoomBtn');
+            createButton.disabled = true;
+            createButton.textContent = '広場を準備中… 🐾';
+            try {
+                const res = await fetch('/api/create_room', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, theme, code, color, fish_limit: fishLimit })
+                });
+                const data = await res.json();
 
-            const data = await res.json();
-
-            if (data.status === 'ok') {
-                window.location.href = '?room=' + encodeURIComponent(data.room_id) + '&color=' + encodeURIComponent(color);
-            } else {
-                alert(data.message || "作成に失敗しました。");
+                if (data.status === 'ok') {
+                    // ページを再読み込みせず、作成APIの返却情報でそのまま広場へ切り替える。
+                    currentRoom = data.room_id;
+                    currentRoomColor = data.color || color;
+                    history.replaceState(null, '', '?room=' + encodeURIComponent(currentRoom) + '&color=' + encodeURIComponent(currentRoomColor));
+                    await showRoom({
+                        exists: true,
+                        name: data.name || name,
+                        theme: data.theme || theme,
+                        color: currentRoomColor,
+                        fish_limit: data.fish_limit ?? fishLimit,
+                        max_cats: data.max_cats ?? 20,
+                        cat_addition_disabled: !!data.cat_addition_disabled
+                    });
+                } else {
+                    alert(data.message || "作成に失敗しました。");
+                }
+            } catch (err) {
+                alert('広場の作成に失敗しました。通信状態を確認して、もう一度お試しください。');
+            } finally {
+                createButton.disabled = false;
+                createButton.textContent = '広場へ行く 🐾';
             }
         });
 
@@ -1825,44 +1846,48 @@
             }[tag] || tag));
         }
 
+        async function showRoom(info) {
+            if (!info || !info.exists) return;
+
+            document.getElementById('lobby').classList.add('hidden');
+            document.getElementById('roomView').classList.remove('hidden');
+            document.getElementById('settingsBtn').classList.remove('hidden');
+            document.getElementById('roomShareBtn').classList.remove('hidden');
+
+            document.getElementById('headerTitle').textContent = `🐾 ${info.name}`;
+            updateRoomShareUrl();
+            document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
+
+            currentRoomColor = info.color || currentRoomColor || 'yellow';
+            applyColorTheme(currentRoomColor);
+            prepareRoomQr();
+
+            roomConfig.max_cats = info.max_cats ?? 20;
+            roomConfig.fish_limit = info.fish_limit || 3;
+            roomConfig.cat_addition_disabled = !!info.cat_addition_disabled;
+            updateCatAdditionUI();
+            updateFishBadgeDisplay();
+
+            document.documentElement.classList.add('room-ready');
+            document.body.classList.add('room-ready');
+            // 初期猫データ取得は広場の表示をブロックしない。
+            fetchComments();
+            if (!window.roomPollTimer) window.roomPollTimer = setInterval(fetchComments, 1200);
+        }
+
         async function init() {
-            if (currentRoom) {
-                // 部屋情報だけを先に取得。猫画像・QR画像の読み込みは画面表示を止めない。
+            if (!currentRoom) return;
+            try {
                 const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
                 const info = await res.json();
-
                 if (!info.exists) {
                     alert("指定された部屋が存在しないか、48時間が経過して自動解散されました。");
                     window.location.href = '/';
                     return;
                 }
-
-                document.getElementById('lobby').classList.add('hidden');
-                document.getElementById('roomView').classList.remove('hidden');
-                document.getElementById('settingsBtn').classList.remove('hidden');
-                document.getElementById('roomShareBtn').classList.remove('hidden');
-
-                document.getElementById('headerTitle').textContent = `🐾 ${info.name}`;
-                updateRoomShareUrl();
-                document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
-
-                currentRoomColor = info.color || currentRoomColor || 'yellow';
-                applyColorTheme(currentRoomColor);
-                // QRコードはテーマ確定後にバックグラウンドで準備する。
-                prepareRoomQr();
-
-                roomConfig.max_cats = info.max_cats ?? 20;
-                roomConfig.fish_limit = info.fish_limit || 3;
-                roomConfig.cat_addition_disabled = !!info.cat_addition_disabled;
-                updateCatAdditionUI();
-
-                updateFishBadgeDisplay();
-
-                // テーマを適用した部屋の枠を先に表示。猫データ取得は表示後に行う。
-                document.documentElement.classList.add('room-ready');
-                document.body.classList.add('room-ready');
-                fetchComments();
-                setInterval(fetchComments, 1200);
+                await showRoom(info);
+            } catch (err) {
+                alert('広場の情報を取得できませんでした。通信状態を確認してください。');
             }
         }
 
