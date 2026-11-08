@@ -666,6 +666,26 @@
             'black', 'cream', 'gray', 'kiji_tabby', 'longhair',
             'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
         ];
+
+        // 猫画像を先読みして、表示時に画像が後から描き足されるのを防ぐ。
+        // まず通常画像を優先し、読み込み完了後にhappy画像をバックグラウンドで読む。
+        const catImageCache = new Map();
+        function preloadCatImages() {
+            const loadImage = (url, priority) => new Promise(resolve => {
+                if (catImageCache.has(url)) return resolve(catImageCache.get(url));
+                const img = new Image();
+                catImageCache.set(url, img);
+                try { img.fetchPriority = priority; } catch (_) {}
+                img.onload = img.onerror = () => resolve(img);
+                img.src = url;
+                if (img.complete) resolve(img);
+            });
+            const normalImages = catTypes.map(type => `/neko_icon/cat_${type}_normal.png`);
+            const happyImages = catTypes.map(type => `/neko_icon/cat_${type}_happy.png`);
+            Promise.all(normalImages.map(url => loadImage(url, 'high')))
+                .then(() => Promise.all(happyImages.map(url => loadImage(url, 'low'))));
+        }
+        preloadCatImages();
         const randomThemes = [
             "今日あったうれしい事",
             "あした晴れるかな？",
@@ -856,7 +876,7 @@
             }
 
             if (catItem.dataset.appearance !== appearanceKey) {
-                img.src = `neko_icon/cat_${catType}_${expression}.png`;
+                img.src = `/neko_icon/cat_${catType}_${expression}.png`;
                 img.classList.toggle('is-happy', isHappy);
                 catItem.dataset.appearance = appearanceKey;
             }
@@ -881,8 +901,9 @@
             }
         }
 
-        // 位置はステージ内の割合(rx/ry)でも保持し、画面サイズが変わっても同じ相対位置に置く。
-        // x/yは既存サーバーとの互換性のため、現在の画面上のpx値として維持する。
+        // rxは画面幅に対する基準位置、rwはその位置を記録した画面幅。
+        // 狭い画面では中央を保ちつつ、端にいる猫ほど画面端へ強めに寄せる。
+        const EDGE_PULL_STRENGTH = 0.42; // 0=従来の一律比率、1=端への引き寄せを強くする
         function applyResponsiveCatPosition(item, catItem, stage) {
             const width = stage.clientWidth || window.innerWidth;
             const height = stage.clientHeight || 400;
@@ -890,15 +911,43 @@
             const maxY = Math.max(0, height - (catItem.offsetHeight || 45));
 
             if (!Number.isFinite(Number(item.rx))) {
-                const oldX = Number.isFinite(Number(item.x)) ? Number(item.x) : 0;
-                item.rx = width > 0 ? oldX / width : 0.5;
+                const oldX = Number.isFinite(Number(item.x)) ? Number(item.x) : width * 0.5;
+                item.rx = oldX / Math.max(1, width);
             }
             if (!Number.isFinite(Number(item.ry))) {
-                const oldY = Number.isFinite(Number(item.y)) ? Number(item.y) : 0;
-                item.ry = height > 0 ? oldY / height : 0.5;
+                const oldY = Number.isFinite(Number(item.y)) ? Number(item.y) : height * 0.5;
+                item.ry = oldY / Math.max(1, height);
+            }
+            if (item.rpos_v !== 2) {
+                // 旧版rxは猫の左端基準だったため、中央基準へ一度だけ移行する。
+                // 旧データに基準幅がない場合、スマホではPC幅を仮の基準にする。
+                const legacyWidth = (Number.isFinite(Number(item.rw)) && Number(item.rw) > 0)
+                    ? Number(item.rw) : (width < 600 ? 1200 : width);
+                item.rx = (Number(item.rx) * legacyWidth + (catItem.offsetWidth || 45) / 2) / legacyWidth;
+                item.rw = legacyWidth;
+                item.rpos_v = 2;
+            } else if (!Number.isFinite(Number(item.rw)) || Number(item.rw) <= 0) {
+                item.rw = width;
             }
 
-            const x = Math.max(0, Math.min(maxX, Number(item.rx) * width));
+            const baseX = Math.max(0, Math.min(1, Number(item.rx)));
+            const referenceWidth = Math.max(1, Number(item.rw));
+            const widthRatio = width / referenceWidth;
+            const centeredDistance = Math.min(1, Math.abs(baseX - 0.5) * 2);
+            let adjustedDistance = centeredDistance;
+
+            if (widthRatio < 1) {
+                // スマホなど狭い画面：中央付近はほぼ維持し、端ほど外側へ広げる。
+                const exponent = Math.max(0.55, 1 - EDGE_PULL_STRENGTH * (1 - widthRatio));
+                adjustedDistance = Math.pow(centeredDistance, exponent);
+            } else if (widthRatio > 1) {
+                // 広い画面へ戻したときは逆方向に圧縮し、元の配置に近づける。
+                const exponent = 1 + EDGE_PULL_STRENGTH * (1 - 1 / widthRatio);
+                adjustedDistance = Math.pow(centeredDistance, exponent);
+            }
+
+            const mappedX = 0.5 + (baseX < 0.5 ? -1 : 1) * adjustedDistance * 0.5;
+            const x = Math.max(0, Math.min(maxX, mappedX * width - (catItem.offsetWidth || 45) / 2));
             const y = Math.max(0, Math.min(maxY, Number(item.ry) * height));
             catItem.style.left = x + 'px';
             catItem.style.top = y + 'px';
@@ -941,8 +990,9 @@
 
                     const initialX = Number.isFinite(Number(item.x)) ? Number(item.x) : (c * cellWidth + randomX);
                     const initialY = Number.isFinite(Number(item.y)) ? Number(item.y) : (r * cellHeight + randomY);
-                    if (!Number.isFinite(Number(item.rx))) item.rx = initialX / Math.max(1, stageWidth);
+                    if (!Number.isFinite(Number(item.rx))) item.rx = (initialX + 22.5) / Math.max(1, stageWidth);
                     if (!Number.isFinite(Number(item.ry))) item.ry = initialY / Math.max(1, stageHeight);
+                    if (!Number.isFinite(Number(item.rw)) || Number(item.rw) <= 0) item.rw = stageWidth;
                     catItem.style.left = initialX + 'px';
                     catItem.style.top = initialY + 'px';
 
@@ -1243,8 +1293,9 @@
                         comments[idx].x = parseFloat(catItem.style.left) || 0;
                         comments[idx].y = parseFloat(catItem.style.top) || 0;
                         const stage = document.getElementById('stage');
-                        comments[idx].rx = comments[idx].x / Math.max(1, stage.clientWidth);
+                        comments[idx].rx = (comments[idx].x + (catItem.offsetWidth || 45) / 2) / Math.max(1, stage.clientWidth);
                         comments[idx].ry = comments[idx].y / Math.max(1, stage.clientHeight);
+                        comments[idx].rw = stage.clientWidth;
                         suppressNextCatClick = true;
                         saveToServer();
                     }
