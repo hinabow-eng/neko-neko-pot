@@ -5,8 +5,21 @@
         // 部屋URLでは初回描画からTOP画面を隠し、画面切替時のちらつきを防ぐ
         (function () {
             try {
-                if (new URLSearchParams(location.search).has('room')) {
+                const params = new URLSearchParams(location.search);
+                if (params.has('room')) {
                     document.documentElement.classList.add('room-link');
+                    const colors = {
+                        yellow: ['#fef3c7', '#fffbeb'],
+                        mint: ['#d1fae5', '#ecfdf5'],
+                        blue: ['#e0f2fe', '#f0f9ff'],
+                        purple: ['#f3e8ff', '#faf5ff'],
+                        pink: ['#fce7f3', '#fdf2f8']
+                    };
+                    const initialColor = params.get('color');
+                    const pair = colors[initialColor] || ['#e2e8f0', '#f1f5f9'];
+                    document.documentElement.style.setProperty('--bg-start', pair[0]);
+                    document.documentElement.style.setProperty('--bg-end', pair[1]);
+                    document.documentElement.style.background = `linear-gradient(180deg, ${pair[0]}, ${pair[1]})`;
                 }
             } catch (_) {}
         })();
@@ -115,7 +128,7 @@
         .hidden { display: none !important; }
         html.room-link #lobby { display: none !important; }
         html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
-        html.room-link body { visibility: hidden; }
+        html.room-link body { visibility: hidden; background: linear-gradient(180deg, var(--bg-start), var(--bg-end)); }
         html.room-link body.room-ready { visibility: visible; }
         .cat-item { touch-action: none !important; }
         .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
@@ -716,12 +729,13 @@
         let isClearingCats = false;
         const urlParams = new URLSearchParams(window.location.search);
         const currentRoom = urlParams.get('room');
+        let currentRoomColor = urlParams.get('color') || 'yellow';
 
         // 部屋URLが分かった時点でQR画像を先読み。ボタンを押したときはキャッシュ済み画像を表示する。
         let roomQrReady = Promise.resolve(false);
         function prepareRoomQr() {
             if (!currentRoom) return roomQrReady;
-            const url = window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom);
+            const url = window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom) + '&color=' + encodeURIComponent(currentRoomColor);
             const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=' + encodeURIComponent(url);
             const qrImage = document.getElementById('roomQrImage');
             qrImage.src = qrUrl;
@@ -794,7 +808,7 @@
             const data = await res.json();
 
             if (data.status === 'ok') {
-                window.location.href = '?room=' + encodeURIComponent(data.room_id);
+                window.location.href = '?room=' + encodeURIComponent(data.room_id) + '&color=' + encodeURIComponent(color);
             } else {
                 alert(data.message || "作成に失敗しました。");
             }
@@ -1748,7 +1762,7 @@
 
         // 部屋専用URLの共有（コピー／QRコード）
         function getRoomShareUrl() {
-            return window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom || '');
+            return window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom || '') + '&color=' + encodeURIComponent(currentRoomColor);
         }
 
         function updateRoomShareUrl() {
@@ -1813,8 +1827,7 @@
 
         async function init() {
             if (currentRoom) {
-                // QR生成と部屋情報取得を並行して開始する。
-                prepareRoomQr();
+                // 部屋情報だけを先に取得。猫画像・QR画像の読み込みは画面表示を止めない。
                 const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
                 const info = await res.json();
 
@@ -1833,7 +1846,10 @@
                 updateRoomShareUrl();
                 document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
 
-                applyColorTheme(info.color);
+                currentRoomColor = info.color || currentRoomColor || 'yellow';
+                applyColorTheme(currentRoomColor);
+                // QRコードはテーマ確定後にバックグラウンドで準備する。
+                prepareRoomQr();
 
                 roomConfig.max_cats = info.max_cats ?? 20;
                 roomConfig.fish_limit = info.fish_limit || 3;
@@ -1842,9 +1858,10 @@
 
                 updateFishBadgeDisplay();
 
-                await fetchComments();
+                // テーマを適用した部屋の枠を先に表示。猫データ取得は表示後に行う。
                 document.documentElement.classList.add('room-ready');
                 document.body.classList.add('room-ready');
+                fetchComments();
                 setInterval(fetchComments, 1200);
             }
         }
