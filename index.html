@@ -315,19 +315,17 @@
             display: flex; align-items: center; gap: 6px; backdrop-filter: blur(4px);
         }
 
+        /* 通知の色は部屋のテーマに合わせる（各テーマの最も濃い文字色を使用） */
         .toast-notify {
-            position: fixed; top: 115px; left: 50%; transform: translateX(-50%);
-            background: rgba(120, 53, 15, 0.9); color: white; padding: 8px 18px;
+            position: fixed; top: 115px; left: 50%;
+            background: var(--text-color); color: #ffffff; padding: 8px 18px;
             border-radius: 20px; font-size: 0.85rem; font-weight: bold; z-index: 1500;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.15); animation: toastFade 3s forwards;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
             pointer-events: none;
+            opacity: 0; transform: translate(-50%, -10px);
+            transition: opacity .3s ease, transform .3s ease;
         }
-        @keyframes toastFade {
-            0% { opacity: 0; transform: translate(-50%, -10px); }
-            15% { opacity: 1; transform: translate(-50%, 0); }
-            85% { opacity: 1; transform: translate(-50%, 0); }
-            100% { opacity: 0; transform: translate(-50%, -10px); }
-        }
+        .toast-notify.show { opacity: 1; transform: translate(-50%, 0); }
 
         .pop-effect {
             position: absolute; color: var(--header-cat); font-weight: bold; font-size: 1.3rem;
@@ -1042,9 +1040,7 @@
 
                     const initialX = Number.isFinite(Number(item.x)) ? Number(item.x) : (c * cellWidth + randomX);
                     const initialY = Number.isFinite(Number(item.y)) ? Number(item.y) : (r * cellHeight + randomY);
-                    if (!Number.isFinite(Number(item.rx))) item.rx = (initialX + 29.5) / Math.max(1, stageWidth);
-                    if (!Number.isFinite(Number(item.ry))) item.ry = initialY / Math.max(1, stageHeight);
-                    if (!Number.isFinite(Number(item.rw)) || Number(item.rw) <= 0) item.rw = stageWidth;
+                    // 相対位置(rx/ry/rw)は、吹き出しの文字が入って猫の幅が確定した後に計算する。
                     catItem.style.left = initialX + 'px';
                     catItem.style.top = initialY + 'px';
 
@@ -1111,9 +1107,6 @@
                     attachCatDrag(catItem);
                 }
 
-                // 画面幅・高さに応じて相対位置をpxへ変換し、ステージ外にはみ出さないようにする。
-                applyResponsiveCatPosition(item, catItem, stage);
-
                 const isSecret = secretAnimals.some(sa => sa.icon === item.icon);
                 const likeIcon = isSecret ? '❤️' : '🐟';
                 const pinMark = item.pinned ? '📌 ' : '';
@@ -1135,6 +1128,25 @@
                     footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
                 }
                 applyCatGrowth(catItem, item.likes);
+
+                // 文字・画像が入って猫の幅が確定してから位置を決める。
+                // （先に計算すると幅を狭く見積もり、再描画のときに横へズレて「カクッ」となる）
+                if (isNew) {
+                    const w = catItem.offsetWidth || 59;
+                    if (!Number.isFinite(Number(item.rx))) {
+                        const left = parseFloat(catItem.style.left) || 0;
+                        item.rx = (left + w / 2) / Math.max(1, stageWidth);
+                        item.rpos_v = 2; // 中央基準で作ったので、旧データ用の移行処理は不要
+                    }
+                    if (!Number.isFinite(Number(item.ry))) {
+                        const top = parseFloat(catItem.style.top) || 0;
+                        item.ry = top / Math.max(1, stageHeight);
+                    }
+                    if (!Number.isFinite(Number(item.rw)) || Number(item.rw) <= 0) item.rw = stageWidth;
+                }
+
+                // 画面幅・高さに応じて相対位置をpxへ変換し、ステージ外にはみ出さないようにする。
+                applyResponsiveCatPosition(item, catItem, stage);
             });
 
             existingCats.forEach((el, key) => {
@@ -1178,12 +1190,15 @@
             badge.innerHTML = `🐟 あと <span id="fishRemCount">${rem}</span> 匹`;
         }
 
-        function showToast(msg) {
+        // holdMs：ふわっと表示された後、そのまま表示し続ける時間（ミリ秒）
+        function showToast(msg, holdMs = 2700) {
             const toast = document.createElement('div');
             toast.className = 'toast-notify';
             toast.textContent = msg;
             document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+            requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('show')));
+            setTimeout(() => toast.classList.remove('show'), holdMs);
+            setTimeout(() => toast.remove(), holdMs + 350);
         }
 
         async function fetchComments() {
@@ -1747,7 +1762,8 @@
                         ], { duration: 2100, easing: 'ease-in', fill: 'forwards' }).onfinish = () => ghost.remove();
                     }, 500);
                 });
-                showToast('猫たちがみんな帰りました 🐾');
+                // 猫が逃げ終わる(0.5秒待ち+2.1秒移動=2.6秒)のを待ち、さらに0.5秒残してから消す。
+                showToast('猫たちがみんな帰りました 🐾', 3100);
                 // 解散直後から新しい猫を追加できるようにする。
             } catch (err) {
                 isClearingCats = false;
