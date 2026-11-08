@@ -502,7 +502,7 @@
     <div id="lobby">
         <h2>🐾 新しい広場をつくる</h2>
         <div class="form-group">
-            <label>1. 部屋の名前</label>
+            <label>1. 広場の名前</label>
             <input type="text" id="inName" placeholder="空欄なら「もふもふ広場」" maxlength="20">
         </div>
         <div class="form-group">
@@ -673,6 +673,7 @@
         <a class="ofuse-btn" href="https://ofuse.me/o?uid=231659" target="_blank" rel="noopener noreferrer">💙 OFUSEで応援を送る</a>
     </div>
 
+    <script id="room-bootstrap-data" type="application/json">null</script>
     <script>
         const catTypes = [
             'black', 'cream', 'gray', 'kiji_tabby', 'longhair',
@@ -1894,10 +1895,28 @@
         async function init() {
             if (!currentRoom) return;
             try {
-                const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
-                const info = await res.json();
+                // 部屋リンクの場合、サーバーがHTMLに埋め込んだ情報を先に使う。
+                // これにより /api/room_info の追加通信を省略できる。
+                let info = null;
+                const bootstrap = document.getElementById('room-bootstrap-data');
+                if (bootstrap) {
+                    try {
+                        const embedded = JSON.parse(bootstrap.textContent || 'null');
+                        if (embedded && typeof embedded.exists === 'boolean') {
+                            info = embedded;
+                        }
+                    } catch (_) {}
+                }
+
+                // 埋め込み情報がない場合だけ、従来APIにフォールバックする。
+                if (!info) {
+                    const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
+                    if (!res.ok) throw new Error('room info request failed');
+                    info = await res.json();
+                }
+
                 if (!info.exists) {
-                    alert("指定された部屋が存在しないか、48時間が経過して自動解散されました。");
+                    alert("指定された広場が存在しないか、48時間が経過して自動解散されました。");
                     window.location.href = '/';
                     return;
                 }
@@ -1916,7 +1935,11 @@
             }, 120);
         });
 
-        window.addEventListener('load', init);
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init, { once: true });
+        } else {
+            init();
+        }
     </script>
 </body>
 </html>
