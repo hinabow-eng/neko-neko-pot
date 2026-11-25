@@ -1,593 +1,2160 @@
-import json
-import math
-import os
-import re
-import secrets
-import string
-import tempfile
-import threading
-from contextlib import contextmanager
-from datetime import datetime, timedelta
-
-from flask import Flask, request, jsonify, send_from_directory, Response
-
-try:
-    import fcntl  # Linux / Mac（Renderはここ）。Windowsには無いので、その場合は下のthreading.Lockだけ使う
-except ImportError:
-    fcntl = None
-
-# static_folder=None：このフォルダのファイルが勝手に公開されないようにする
-app = Flask(__name__, static_folder=None)
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# 部屋データの保存先
-DATA_FILE = os.environ.get(
-    'NEKO_DATA_FILE',
-    os.path.join(tempfile.gettempdir(), 'neko_rooms.json')
-)
-LOCK_FILE = DATA_FILE + '.lock'
-_thread_lock = threading.Lock()
-
-ROOM_ID_CHARS = string.ascii_letters + string.digits
-ALLOWED_FISH_LIMITS = (1, 3, 5, 7, 10, 999)
-ALLOWED_CAT_LIMITS = (10, 20, 30, 50, 999)
-SECRET_CAT_LIMIT_CODE = '0518'
-
-
-def _now():
-    return datetime.now()
-
-
-def _parse_time(value):
-    try:
-        return datetime.fromisoformat(value)
-    except Exception:
-        return _now()
-
-
-def load_db():
-    """ファイルから全部屋を読み込む。48時間以上更新のない部屋は取り除く。"""
-    try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            db = json.load(f)
-    except (FileNotFoundError, ValueError):
-        db = {}
-
-    now = _now()
-    for room_id in list(db.keys()):
-        updated_at = _parse_time(db[room_id].get('updated_at', ''))
-        if now - updated_at > timedelta(hours=48):
-            del db[room_id]
-
-    return db
-
-
-def save_db(db):
-    """途中で壊れないように、一時ファイルに書いてから入れ替える。"""
-    tmp_path = DATA_FILE + '.tmp.' + secrets.token_hex(4)
-
-    with open(tmp_path, 'w', encoding='utf-8') as f:
-        json.dump(db, f, ensure_ascii=False)
-
-    os.replace(tmp_path, DATA_FILE)
-
-
-@contextmanager
-def locked_db():
-    """読む → 変更する → 書く、を他のワーカーと同時にやらないようにする。"""
-    with _thread_lock:
-        lock = open(LOCK_FILE, 'a+')
-
-        try:
-            if fcntl:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-
-            db = load_db()
-            yield db
-            save_db(db)
-
-        finally:
-            if fcntl:
-                fcntl.flock(lock, fcntl.LOCK_UN)
-
-            lock.close()
-
-
-def generate_room_id(db):
-    while True:
-        length = secrets.choice(range(20, 31))
-        room_id = ''.join(
-            secrets.choice(ROOM_ID_CHARS)
-            for _ in range(length)
-        )
-
-        if room_id not in db:
-            return room_id
-
-
-# ==========================================
-# トップページ
-# ==========================================
-
-@app.route('/')
-def index():
-    room_id = request.args.get('room', '').strip()
-
-    # 通常のTOPアクセスは従来どおり静的ファイル配信。
-    if not room_id:
-        return send_from_directory(BASE_DIR, 'index.html')
-
-    # 部屋リンクでは、初回HTMLに公開用の部屋情報を埋め込む。
-    # ブラウザ側の /api/room_info 追加通信をなくして初期表示を早める。
-    try:
-        db = load_db()
-        room = db.get(room_id)
-        if room:
-            info = room.get('info', {})
-            initial_info = {
-                'exists': True,
-                'name': info.get('name', ''),
-                'theme': info.get('theme', ''),
-                'color': info.get('color', 'yellow'),
-                'fish_limit': info.get('fish_limit', 3),
-                'max_cats': info.get('max_cats', 20),
-                'cat_addition_disabled': bool(
-                    info.get('cat_addition_disabled', False)
-                )
-            }
-        else:
-            initial_info = {'exists': False}
-
-        html_path = os.path.join(BASE_DIR, 'index.html')
-        with open(html_path, 'r', encoding='utf-8') as f:
-            page = f.read()
-
-        payload = json.dumps(initial_info, ensure_ascii=False)
-        # script要素内への不正なHTML混入を防ぐ。
-        payload = (payload.replace('&', '\\u0026')
-                          .replace('<', '\\u003c')
-                          .replace('>', '\\u003e'))
-
-        placeholder = '<script id="room-bootstrap-data" type="application/json">null</script>'
-        if placeholder not in page:
-            # HTMLが古い場合でもページ自体は返し、JS側のAPIフォールバックを使う。
-            response = Response(page, mimetype='text/html')
-        else:
-            page = page.replace(
-                placeholder,
-                '<script id="room-bootstrap-data" type="application/json">'
-                + payload +
-                '</script>',
-                1
-            )
-            response = Response(page, mimetype='text/html')
-
-        response.headers['Cache-Control'] = 'no-store'
-        return response
-
-    except Exception:
-        # 一時的な読み込みエラー時は通常HTMLを返し、JS側のAPI経由で復旧を試みる。
-        return send_from_directory(BASE_DIR, 'index.html')
-
-
-# ==========================================
-# 猫画像の配信
-# neko_iconフォルダ内の画像を表示する
-# ==========================================
-
-@app.route('/neko_icon/<path:filename>')
-def serve_neko_icon(filename):
-    icon_dir = os.path.join(BASE_DIR, 'neko_icon')
-    return send_from_directory(icon_dir, filename)
-
-
-# ==========================================
-# 部屋情報の取得
-# ==========================================
-
-@app.route('/api/room_info')
-def get_room_info():
-    room_id = request.args.get('room', '')
-    db = load_db()
-
-    if room_id in db:
-        info = db[room_id]['info']
-
-        return jsonify({
-            'exists': True,
-            'name': info['name'],
-            'theme': info['theme'],
-            'color': info['color'],
-            'fish_limit': info.get('fish_limit', 3),
-            'max_cats': info.get('max_cats', 20),
-            'cat_addition_disabled': bool(
-                info.get('cat_addition_disabled', False)
-            )
-        })
-
-    return jsonify({'exists': False})
-
-
-# ==========================================
-# 管理コードの確認
-# ==========================================
-
-@app.route('/api/verify_code')
-def verify_code():
-    room_id = request.args.get('room', '')
-    code = str(request.args.get('code', ''))
-
-    db = load_db()
-
-    if room_id not in db:
-        return jsonify({'valid': False}), 404
-
-    valid = secrets.compare_digest(
-        str(db[room_id]['info'].get('code', '')),
-        code
-    )
-
-    return jsonify({'valid': valid})
-
-
-# ==========================================
-# 部屋の作成
-# ==========================================
-
-@app.route('/api/create_room', methods=['POST'])
-def create_room():
-    data = request.get_json(silent=True)
-
-    if not data or not data.get('name') or not data.get('code'):
-        return jsonify({
-            'status': 'error',
-            'message': '入力項目が不足しています'
-        }), 400
-
-    if not re.fullmatch(r'\d{4}', str(data.get('code', ''))):
-        return jsonify({
-            'status': 'error',
-            'message': '管理コードは4桁の数字で入力してください'
-        }), 400
-
-    try:
-        fish_limit = int(data.get('fish_limit', 3))
-    except (TypeError, ValueError):
-        fish_limit = 3
-
-    if fish_limit not in ALLOWED_FISH_LIMITS:
-        fish_limit = 3
-
-    with locked_db() as db:
-        room_id = generate_room_id(db)
-
-        db[room_id] = {
-            'info': {
-                'name': str(data['name'])[:20],
-                'theme': data.get('theme', 'みんなの散歩道'),
-                'code': str(data['code']),
-                'color': data.get('color', 'yellow'),
-                'fish_limit': fish_limit,
-                'max_cats': 20,
-                'cat_addition_disabled': False
-            },
-            'cats': [],
-            'clear_version': 0,
-            'free_positions': [],
-            'updated_at': _now().isoformat()
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <script>
+        // 部屋URLでは初回描画からTOP画面を隠し、画面切替時のちらつきを防ぐ
+        (function () {
+            try {
+                if (new URLSearchParams(location.search).has('room')) {
+                    document.documentElement.classList.add('room-link');
+                }
+            } catch (_) {}
+        })();
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>猫の散歩道 - マルチルーム版</title>
+    <style>
+        :root {
+            --bg-start: #fef3c7;
+            --bg-end: #fffbeb;
+            --header-bg: linear-gradient(135deg, #f59e0b, #fbbf24);
+            --header-cat: #d97706;
+            --button-cat: #f59e0b;
+            --button-hover: #d97706;
+            --text-color: #78350f;
+            --border-color: #f59e0b;
         }
 
-    return jsonify({
-        'status': 'ok',
-        'room_id': room_id
-    })
+        body.theme-mint {
+            --bg-start: #d1fae5;
+            --bg-end: #ecfdf5;
+            --header-bg: linear-gradient(135deg, #10b981, #34d399);
+            --header-cat: #047857;
+            --button-cat: #10b981;
+            --button-hover: #047857;
+            --text-color: #064e3b;
+            --border-color: #10b981;
+        }
+        body.theme-blue {
+            --bg-start: #e0f2fe;
+            --bg-end: #f0f9ff;
+            --header-bg: linear-gradient(135deg, #0284c7, #38bdf8);
+            --header-cat: #0369a1;
+            --button-cat: #0284c7;
+            --button-hover: #0369a1;
+            --text-color: #0c4a6e;
+            --border-color: #0284c7;
+        }
+        body.theme-purple {
+            --bg-start: #f3e8ff;
+            --bg-end: #faf5ff;
+            --header-bg: linear-gradient(135deg, #9333ea, #c084fc);
+            --header-cat: #7e22ce;
+            --button-cat: #9333ea;
+            --button-hover: #7e22ce;
+            --text-color: #581c87;
+            --border-color: #9333ea;
+        }
+        body.theme-pink {
+            --bg-start: #fce7f3;
+            --bg-end: #fdf2f8;
+            --header-bg: linear-gradient(135deg, #ec4899, #f472b6);
+            --header-cat: #be185d;
+            --button-cat: #ec4899;
+            --button-hover: #be185d;
+            --text-color: #831843;
+            --border-color: #ec4899;
+        }
 
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(180deg, var(--bg-start) 0%, var(--bg-end) 100%);
+            color: var(--text-color);
+            overflow: hidden;
+            touch-action: manipulation;
+        }
 
-# ==========================================
-# 猫データの取得
-# ==========================================
+        header {
+            position: absolute; top: 0; left: 0; width: 100%; height: 50px;
+            background: var(--header-bg); color: white; padding: 0 15px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10;
+            display: flex; justify-content: space-between; align-items: center;
+            box-sizing: border-box;
+        }
 
-@app.route('/data.json')
-def get_data_json():
-    room_id = request.args.get('room', '')
-    db = load_db()
+        header h1 { margin: 0; font-size: 1.1rem; }
+        header h1 a { color: inherit; text-decoration: none; display: inline-block; }
+        header h1 a:focus-visible { outline: 2px solid #fff; outline-offset: 3px; border-radius: 4px; }
+        .header-actions { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
+        header .settings-btn, header .share-btn {
+            border: 1px solid rgba(255,255,255,0.9);
+            background: #ffffff;
+            color: #78350f;
+            padding: 7px 12px;
+            border-radius: 16px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 700;
+            line-height: 1.2;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.12);
+            opacity: 1;
+        }
+        header .share-btn { color: #1d4ed8; }
+        header .settings-btn:hover, header .share-btn:hover {
+            background: #f8fafc;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.18);
+        }
+        header .settings-btn:active, header .share-btn:active { transform: translateY(1px); }
+        @media (max-width: 440px) {
+            header { padding: 0 9px; }
+            header h1 { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+            .header-actions { gap: 5px; }
+            header .settings-btn, header .share-btn { padding: 7px 8px; font-size: .75rem; }
+        }
 
-    if room_id in db:
-        response = jsonify(db[room_id].get('cats', []))
-        response.headers['X-Clear-Version'] = str(
-            db[room_id].get('clear_version', 0)
-        )
-        response.headers['Cache-Control'] = 'no-store'
-        return response
+        .hidden { display: none !important; }
+        html.room-link #lobby { display: none !important; }
+        html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
+        html.room-link #roomView:not(.hidden) { visibility: visible; }
+        .cat-item { touch-action: none !important; }
+        .cat-item.is-dragging { z-index: 500 !important; transition: none !important; cursor: grabbing; }
+        .cat-body-wrap { transform-origin: center bottom; transition: transform .3s ease; }
+        .admin-controls.locked { opacity: .38; filter: grayscale(1); pointer-events: none; user-select: none; }
+        .admin-section { margin-top: 9px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; overflow: hidden; }
+        .admin-section > summary { cursor: pointer; list-style: none; padding: 12px 13px; font-size: .88rem; font-weight: 700; color: #475569; background: #f8fafc; }
+        .admin-section > summary::-webkit-details-marker { display: none; }
+        .admin-section > summary::after { content: '＋'; float: right; color: #94a3b8; }
+        .admin-section[open] > summary::after { content: '－'; }
+        .admin-section-content { padding: 10px; border-top: 1px solid #e2e8f0; }
+        /* 設定項目は上端を固定し、下方向だけに開く */
+        .admin-section[open] > .admin-section-content {
+            transform-origin: top center;
+            animation: adminSectionOpen .28s cubic-bezier(.2,.75,.25,1) both;
+        }
+        @keyframes adminSectionOpen {
+            from { opacity: 0; transform: translateY(0) scaleY(.96); }
+            to   { opacity: 1; transform: translateY(0) scaleY(1); }
+        }
+        .theme-edit-row { display: flex; align-items: center; gap: 7px; }
+        .theme-edit-row input { flex: 1; min-width: 0; margin: 8px 0 !important; }
+        .theme-edit-row button {
+            flex: 0 0 auto; padding: 9px 17px; border: 0; border-radius: 7px;
+            background: #3b82f6; color: #fff; font-weight: 700; cursor: pointer;
+        }
+        .quiet-action-buttons button {
+            background: #e5e7eb !important; color: #475569 !important;
+            border: 1px solid #cbd5e1 !important;
+        }
+        .cat-bubble { transition: transform .3s ease; transform-origin: center bottom; }
+        #adminCodeStatus { min-height: 1.2em; margin-top: 5px; font-size: .75rem; color: #64748b; }
+        .code-input { -webkit-text-security: disc; text-security: disc; }
 
-    response = jsonify([])
-    response.headers['X-Clear-Version'] = '0'
-    response.headers['Cache-Control'] = 'no-store'
+        .support-box {
+            position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 90; width: max-content; max-width: 94vw; box-sizing: border-box;
+            text-align: center; padding: 6px 14px 8px;
+            background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(6px);
+            border: none; border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .support-text { font-size: 0.8rem; font-weight: bold; color: var(--header-cat); margin-bottom: 4px; line-height: 1.4; }
+        .ofuse-btn {
+            display: inline-block; padding: 7px 22px; border-radius: 999px;
+            border: 2px solid #2a86a8; color: #2a86a8; background: #ffffff;
+            font-size: 0.85rem; font-weight: bold; text-decoration: none; white-space: nowrap;
+            transition: background 0.2s, color 0.2s;
+        }
+        .ofuse-btn:hover, .ofuse-btn:active { background: #2a86a8; color: #ffffff; }
 
-    return response
+        #lobby {
+            /* ヘッダーとの隙間を従来の約1/4にするため、メニューを上へ */
+            position: absolute; top: calc(50% - 105px); left: 50%; transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95); padding: 24px; border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; width: 90%; max-width: 420px;
+            box-sizing: border-box; max-height: calc(100vh - 200px); overflow-y: auto;
+        }
 
+        #lobby h2 { margin-top: 0; color: var(--header-cat); font-size: 1.3rem; }
 
-# ==========================================
-# 猫データの保存
-# ==========================================
+        /* TOPの猫たち：メニューのまわりに広がる、触って遊べる猫ガーデン */
+        #topCatGarden {
+            position: fixed; inset: 0; z-index: 2;
+            pointer-events: none; overflow: visible;
+        }
+        #lobby { z-index: 3; }
+        .top-garden-cat {
+            position: absolute; width: var(--top-cat-size, 58px); height: var(--top-cat-size, 58px);
+            display: flex; align-items: center; justify-content: center;
+            transform-origin: center center; opacity: .99;
+            pointer-events: auto; touch-action: none; user-select: none;
+            -webkit-user-select: none; cursor: grab; border-radius: 50%;
+            animation: topCatFloat var(--float-duration, 4.8s) ease-in-out var(--float-delay, 0s) infinite;
+            filter: drop-shadow(0 3px 4px rgba(0,0,0,.12));
+        }
+        .top-garden-cat img {
+            width: 100%; height: 100%; object-fit: contain;
+            pointer-events: none; user-select: none; -webkit-user-drag: none;
+        }
+        .top-garden-cat.is-dragging {
+            cursor: grabbing; z-index: 8; animation-play-state: paused;
+            filter: drop-shadow(0 7px 9px rgba(0,0,0,.22));
+        }
+        .top-garden-cat:focus-visible { outline: 3px solid #f59e0b; outline-offset: 3px; }
+        @keyframes topCatFloat {
+            0%, 100% { transform: translateY(0) rotate(var(--tilt, -2deg)); }
+            50% { transform: translateY(-8px) rotate(2deg); }
+        }
+        .top-garden-cat.is-happy-pop img { animation: topCatHappyPop .22s ease-out; }
+        @keyframes topCatHappyPop {
+            0% { transform: scale(.88); }
+            70% { transform: scale(1.10); }
+            100% { transform: scale(1); }
+        }
+        @media (max-width: 480px) {
+            .top-garden-cat { filter: drop-shadow(0 2px 3px rgba(0,0,0,.12)); }
+        }
+        .form-group { text-align: left; margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 0.85rem; font-weight: bold; margin-bottom: 4px; }
+        .form-group input, .form-group select {
+            width: 100%; padding: 10px 14px; border: 2px solid #e5e7eb; border-radius: 10px;
+            outline: none; font-size: 16px; box-sizing: border-box;
+        }
+        .form-group input:focus { border-color: var(--button-cat); }
 
-@app.route('/save', methods=['POST'])
-def save_data():
-    room_id = request.args.get('room', '')
-    data = request.get_json(silent=True)
+        #createRoomBtn {
+            width: 100%; background-color: var(--button-cat); color: white; border: none;
+            padding: 12px; border-radius: 25px; font-weight: bold; font-size: 1rem;
+            cursor: pointer; margin-top: 10px;
+        }
+        #createRoomBtn:hover { background-color: var(--button-hover); }
 
-    if data is None:
-        return jsonify({'status': 'error'}), 400
+        .post-container {
+            position: absolute; top: 50px; left: 0; width: 100%; height: 60px;
+            background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(8px);
+            padding: 0 12px; display: flex; gap: 8px; z-index: 10;
+            align-items: center; justify-content: center; box-sizing: border-box;
+        }
 
-    with locked_db() as db:
-        if room_id in db:
-            room = db[room_id]
-            existing = room.get('cats', [])
+        .post-container input[type="text"] {
+            flex: 1; max-width: 500px; padding: 10px 14px; border: 2px solid #e5e7eb;
+            border-radius: 25px; outline: none; font-size: 16px; background: white;
+        }
+        .post-container input[type="text"]:focus { border-color: var(--button-cat); }
+        .post-container button {
+            background-color: var(--button-cat); color: white; border: none;
+            padding: 10px 16px; border-radius: 25px; font-weight: bold; cursor: pointer;
+            white-space: nowrap; font-size: 0.9rem;
+        }
 
-            try:
-                client_clear_version = int(
-                    request.headers.get('X-Clear-Version', '-1')
-                )
-            except (TypeError, ValueError):
-                client_clear_version = -1
+        .cloud-container {
+            position: absolute; top: 125px; left: 50%; transform: translateX(-50%);
+            z-index: 2; pointer-events: none; animation: cloudFloat 6s ease-in-out infinite;
+            display: flex; justify-content: center; align-items: center; width: 100%;
+        }
 
-            server_clear_version = int(
-                room.get('clear_version', 0)
-            )
+        .cloud-wrapper-long {
+            position: relative; width: 420px; height: 120px;
+            display: flex; justify-content: center; align-items: center; transition: transform 0.3s;
+        }
 
-            if client_clear_version != server_clear_version:
-                return jsonify({
-                    'status': 'stale',
-                    'message': '部屋の猫一覧が更新されています',
-                    'clear_version': server_clear_version
-                }), 409
+        .cloud-svg-long {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            overflow: visible;
+        }
 
-            if not isinstance(data, list):
-                return jsonify({
-                    'status': 'error',
-                    'message': '猫データの形式が正しくありません'
-                }), 400
+        .cloud-text {
+            font-size: 1.15rem; font-weight: bold; color: var(--header-cat);
+            letter-spacing: 0.5px; position: relative; z-index: 5; text-align: center;
+            margin-top: -6px; max-width: 320px; line-height: 1.3;
+            word-break: break-all; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+        }
 
-            old_ids = {
-                str(cat.get('id'))
-                for cat in existing
-                if isinstance(cat, dict) and cat.get('id') is not None
+        @media (max-width: 440px) {
+            .cloud-wrapper-long { transform: scale(0.82); }
+        }
+
+        @keyframes cloudFloat {
+            0%, 100% { transform: translate(-50%, 0px); }
+            50% { transform: translate(-50%, -8px); }
+        }
+
+        #stage { position: absolute; top: 230px; bottom: 104px; left: 0; right: 0; overflow: hidden; }
+
+        .cat-item {
+            position: absolute; cursor: pointer; user-select: none; z-index: 5;
+            display: flex; flex-direction: column; align-items: center;
+            transition: transform 0.2s ease-out;
+            touch-action: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .cat-motion {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transform-origin: center center;
+            will-change: transform;
+        }
+        /* ホバー拡大はマウスなど「ホバーできる端末」だけ。スマホではタップ後に :hover が残るため除外 */
+        @media (hover: hover) and (pointer: fine) {
+            .cat-item:hover { transform: scale(1.15) !important; z-index: 100 !important; }
+        }
+        /* タッチ操作用：タップ中・タップ後1.5秒だけ大きくする（JSで付け外し） */
+        .cat-item.touch-active { transform: scale(1.15) !important; z-index: 100 !important; }
+
+        .cat-body-wrap { position: relative; }
+        .sweat-mark {
+            position: absolute; top: -8px; right: -18px; font-size: 1.5rem;
+            animation: sweatPop 0.3s forwards, sweatBlink 0.4s infinite steps(1, start);
+            pointer-events: none; z-index: 200; opacity: 0;
+        }
+        @keyframes sweatPop { 0% { transform: scale(0); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes sweatBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.2; } }
+
+        #roomShareModal { z-index: 2000; }
+        #roomQrModal { z-index: 2100; }
+        .share-section { margin: 0; padding: 12px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; text-align: left; }
+        .share-section h4 { margin: 0 0 5px; color: #1d4ed8; font-size: .95rem; }
+        .share-section p { margin: 0 0 10px; color: #475569; font-size: .78rem; line-height: 1.5; }
+        .share-actions { display: flex; gap: 8px; }
+        .share-actions button { flex: 1; min-width: 0; padding: 10px 7px; border: 0; border-radius: 8px; background: #2563eb; color: white; font-weight: bold; cursor: pointer; }
+        .share-actions button.secondary { background: #64748b; }
+        .share-status { min-height: 1.1em; margin-top: 7px; color: #1d4ed8; font-size: .75rem; }
+        .qr-image { display: block; width: 220px; height: 220px; max-width: 100%; margin: 12px auto; image-rendering: pixelated; }
+        .share-url { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 7px; background: #f8fafc; color: #334155; font-size: .75rem; overflow-wrap: anywhere; }
+
+        .cat-bubble {
+            background: #ffffff; border: 2px solid var(--border-color); border-radius: 18px;
+            padding: 8px 12px; box-shadow: 0 6px 15px rgba(0,0,0,0.08); display: flex;
+            flex-direction: column; align-items: center; gap: 2px; position: relative; margin-bottom: 6px; max-width: 180px;
+        }
+        .cat-bubble::after {
+            content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+            border-width: 8px 6px 0 6px; border-style: solid;
+            border-color: var(--border-color) transparent transparent transparent;
+        }
+        .bubble-text { font-size: 0.85rem; font-weight: 600; text-align: center; word-break: break-all; }
+        .bubble-footer { font-size: 0.8rem; color: var(--header-cat); font-weight: bold; }
+        .cat-body-wrap { font-size: 2.8rem; line-height: 1; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.12)); position: relative; }
+
+        .fish-badge {
+            position: fixed; top: 105px; right: 20px;
+            background: rgba(255, 255, 255, 0.92); border: 2px solid var(--border-color);
+            padding: 8px 16px; border-radius: 20px; font-weight: bold;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12); z-index: 100; font-size: 0.9rem;
+            display: flex; align-items: center; gap: 6px; backdrop-filter: blur(4px);
+        }
+
+        .toast-notify {
+            position: fixed; top: 115px; left: 50%; transform: translateX(-50%);
+            background: rgba(120, 53, 15, 0.9); color: white; padding: 8px 18px;
+            border-radius: 20px; font-size: 0.85rem; font-weight: bold; z-index: 1500;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15); animation: toastFade 3s forwards;
+            pointer-events: none;
+        }
+        @keyframes toastFade {
+            0% { opacity: 0; transform: translate(-50%, -10px); }
+            15% { opacity: 1; transform: translate(-50%, 0); }
+            85% { opacity: 1; transform: translate(-50%, 0); }
+            100% { opacity: 0; transform: translate(-50%, -10px); }
+        }
+
+        .pop-effect {
+            position: absolute; color: var(--header-cat); font-weight: bold; font-size: 1.3rem;
+            pointer-events: none; animation: popUp 0.8s forwards ease-out; z-index: 1000;
+        }
+        @keyframes popUp {
+            0% { transform: translateY(0) scale(0.5); opacity: 1; }
+            50% { transform: translateY(-30px) scale(1.2); opacity: 1; }
+            100% { transform: translateY(-70px) scale(1); opacity: 0; }
+        }
+
+        @keyframes walkSmooth1 {
+            0% { transform: translate(0px, 0px) rotate(0deg); }
+            25% { transform: translate(15px, -5px) rotate(2deg); }
+            50% { transform: translate(30px, 0px) rotate(0deg); }
+            75% { transform: translate(15px, 5px) rotate(-2deg); }
+            100% { transform: translate(0px, 0px) rotate(0deg); }
+        }
+        @keyframes walkSmooth2 {
+            0% { transform: translate(0px, 0px) rotate(0deg); }
+            25% { transform: translate(-15px, 5px) rotate(-2deg); }
+            50% { transform: translate(-30px, 0px) rotate(0deg); }
+            75% { transform: translate(-15px, -5px) rotate(2deg); }
+            100% { transform: translate(0px, 0px) rotate(0deg); }
+        }
+
+        .modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.4); z-index: 2000; display: flex;
+            justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: white; padding: 20px; border-radius: 15px; width: 92%; max-width: 380px; text-align: center;
+            box-sizing: border-box; max-height: 85vh; overflow-y: auto;
+        }
+        /* 設定ウィンドウは上端を固定。項目を開いてもウィンドウが上下に揺れない */
+        #settingsModal { align-items: flex-start; }
+        #settingsModal .modal-content { margin-top: max(12px, 4vh); }
+        .modal-content input, .modal-content select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        .modal-btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 15px; }
+        .modal-btn-group button { padding: 10px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
+
+        .cat-manage-list { max-height: 160px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; margin: 8px 0; padding: 4px; text-align: left; }
+        .cat-manage-item { display: flex; justify-content: space-between; align-items: center; padding: 6px; border-bottom: 1px solid #f3f4f6; font-size: 0.8rem; gap: 6px; }
+        .cat-manage-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+        .cat-manage-item button { padding: 3px 8px; font-size: 0.75rem; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; }
+    
+    
+        /* 部屋ごとのテーマカラーに合わせた共有・設定ボタン */
+        header .share-btn,
+        header .settings-btn {
+            color: var(--header-cat);
+            transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        header .share-btn:hover,
+        header .settings-btn:hover {
+            background: #f8fffc;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
+        }
+
+        /* 共有画面のボタンは白抜き＋部屋のテーマカラーの縁取り */
+        .share-actions button,
+        .share-actions button.secondary {
+            background: #ffffff;
+            color: var(--button-cat);
+            border: 2px solid var(--button-cat);
+            transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.08s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .share-actions button:hover,
+        .share-actions button.secondary:hover {
+            background: var(--bg-start);
+            box-shadow: 0 3px 7px rgba(0, 0, 0, 0.14);
+        }
+
+        /* 押した瞬間に沈み込む。押下中のtransformには遅延をつけない */
+        header .share-btn:active,
+        header .settings-btn:active,
+        .share-actions button:active,
+        .share-actions button.secondary:active {
+            transform: translateY(2px) scale(0.96);
+            transition-duration: 0s;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.18);
+            filter: brightness(0.96);
+        }
+
+        header .share-btn:focus-visible,
+        header .settings-btn:focus-visible,
+        .share-actions button:focus-visible {
+            outline: 3px solid var(--border-color);
+            outline-offset: 2px;
+        }
+
+    
+        /* 共有ボタン：テーマカラーで塗りつぶし、文字は白 */
+        .share-actions button,
+        .share-actions button.secondary {
+            background: var(--button-cat);
+            color: #ffffff;
+            border: 2px solid var(--button-cat);
+            transition: background-color 0.08s linear, box-shadow 0.08s linear, transform 0.05s linear;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            user-select: none;
+        }
+
+        .share-actions button:hover,
+        .share-actions button.secondary:hover {
+            background: var(--button-hover);
+            border-color: var(--button-hover);
+            color: #ffffff;
+        }
+
+        /* 猫を追加ボタンにも押下フィードバック */
+        .post-container button {
+            transition: background-color 0.08s linear, box-shadow 0.08s linear, transform 0.05s linear;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            user-select: none;
+        }
+
+        .post-container button:hover {
+            background-color: var(--button-hover);
+        }
+
+        /* タップした瞬間に反応。押下中はアニメーション待ちを発生させない */
+        .share-actions button:active,
+        .share-actions button.secondary:active,
+        .post-container button:active,
+        header .share-btn:active,
+        header .settings-btn:active {
+            transform: translateY(2px) scale(0.96);
+            transition: none;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.22);
+            filter: brightness(0.92);
+        }
+
+    
+        .cat-avatar {
+            display: block;
+            width: 45px;
+            height: 45px;
+            object-fit: contain;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
+        }
+        .cat-avatar.is-happy {
+            animation: catHappyPop 0.16s ease-out;
+        }
+        @keyframes catHappyPop {
+            0% { transform: scale(0.88); }
+            70% { transform: scale(1.08); }
+            100% { transform: scale(1); }
+        }
+        @media (max-width: 480px) {
+            .cat-avatar { width: 45px; height: 45px; }
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1><a id="headerTitle" href="/" title="猫の散歩道 TOPへ戻る">🐾 猫の散歩道</a></h1>
+        <div class="header-actions">
+            <button id="roomShareBtn" class="share-btn hidden" type="button">🔗 部屋を共有</button>
+            <button id="settingsBtn" class="settings-btn hidden" type="button">⚙️ 設定</button>
+        </div>
+    </header>
+
+    <div id="lobby">
+        <h2>🐾 新しいお部屋をつくろう</h2>
+        <div class="form-group">
+            <label>お話のテーマ</label>
+            <input type="text" id="inTheme" placeholder="空欄ならランダムテーマ" maxlength="30">
+        </div>
+        <div class="form-group">
+            <label>テーマカラー</label>
+            <select id="inColor">
+                <option value="random">🎲 ランダム（標準）</option>
+                <option value="yellow">💛 イエロー</option>
+                <option value="mint">💚 ミントグリーン</option>
+                <option value="blue">💙 スカイブルー</option>
+                <option value="purple">💜 ラベンダー</option>
+                <option value="pink">🩷 サクラピンク</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>管理コード（数字4桁）</label>
+            <input type="text" id="inCode" class="code-input" placeholder="空欄なら「1111」" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </div>
+        <!-- 既存の作成処理との互換性のため、魚の上限は画面に出さず無制限を設定 -->
+        <select id="inFishLimit" class="hidden" aria-hidden="true" tabindex="-1">
+            <option value="999" selected>無制限</option>
+        </select>
+        <button id="createRoomBtn">お部屋を作る 🐾</button>
+    </div>
+
+    <!-- TOPをにぎやかにする、ふわふわ猫の広場 -->
+    <div id="topCatGarden" aria-hidden="true"></div>
+
+    <div id="roomView" class="hidden">
+        <div class="post-container">
+            <input type="text" id="commentInput" placeholder="つぶやきを入力..." maxlength="30">
+            <button id="postBtn">猫を追加 🐾</button>
+        </div>
+
+        <div id="cloudBox" class="cloud-container">
+            <div class="cloud-wrapper-long">
+                <svg class="cloud-svg-long" viewBox="0 0 440 130" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#ffffff" />
+                            <stop offset="70%" stop-color="#f8fafc" />
+                            <stop offset="100%" stop-color="#e2e8f0" />
+                        </linearGradient>
+                        <filter id="cloudShadow" x="-10%" y="-10%" width="120%" height="130%">
+                            <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.08" />
+                        </filter>
+                    </defs>
+                    <path d="M 50 90 A 30 30 0 0 1 25 60 A 32 32 0 0 1 55 28 A 35 35 0 0 1 100 22 A 35 35 0 0 1 155 22 A 35 35 0 0 1 210 22 A 35 35 0 0 1 265 22 A 35 35 0 0 1 320 22 A 35 35 0 0 1 375 28 A 32 32 0 0 1 405 60 A 30 30 0 0 1 380 90 A 32 32 0 0 1 325 95 A 32 32 0 0 1 265 95 A 32 32 0 0 1 205 95 A 32 32 0 0 1 145 95 A 32 32 0 0 1 85 95 A 32 32 0 0 1 50 90 Z" fill="rgba(0,0,0,0.04)" transform="translate(0, 4)" />
+                    <path d="M 50 90 A 30 30 0 0 1 25 60 A 32 32 0 0 1 55 28 A 35 35 0 0 1 100 22 A 35 35 0 0 1 155 22 A 35 35 0 0 1 210 22 A 35 35 0 0 1 265 22 A 35 35 0 0 1 320 22 A 35 35 0 0 1 375 28 A 32 32 0 0 1 405 60 A 30 30 0 0 1 380 90 A 32 32 0 0 1 325 95 A 32 32 0 0 1 265 95 A 32 32 0 0 1 205 95 A 32 32 0 0 1 145 95 A 32 32 0 0 1 85 95 A 32 32 0 0 1 50 90 Z" fill="url(#cloudGrad)" stroke="#cbd5e1" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" filter="url(#cloudShadow)" />
+                </svg>
+                <span id="cloudThemeText" class="cloud-text">💡 テーマ</span>
+            </div>
+        </div>
+
+        <div id="stage"></div>
+        <div id="fishBadge" class="fish-badge">🐟 あと <span id="fishRemCount">3</span> 匹</div>
+    </div>
+
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>⚙️ 部屋の設定</h3>
+
+            <p style="font-size:0.8rem; color:#666;">部屋の管理操作には4桁の管理コードが必要です</p>
+            <input type="text" id="modalCode" class="code-input" placeholder="管理コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+            <div id="adminCodeStatus">管理コードを入力すると、下の設定を操作できます。</div>
+            <div id="adminControls" class="admin-controls locked" aria-disabled="true">
+                <details class="admin-section">
+                    <summary>🏠 お部屋の名前を変更</summary>
+                    <div class="admin-section-content">
+                        <label style="font-size:0.8rem; font-weight:bold; display:block; text-align:left;">新しいお部屋の名前（20文字まで）</label>
+                        <div class="theme-edit-row">
+                            <input type="text" id="modalNewName" placeholder="猫の散歩道" maxlength="20">
+                            <button id="btnChangeName" type="button">変更</button>
+                        </div>
+                        <div style="font-size:0.75rem; color:#64748b; text-align:left;">空欄にすると「猫の散歩道」に戻ります。</div>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>🎨 テーマの変更</summary>
+                    <div class="admin-section-content">
+                        <label style="font-size:0.8rem; font-weight:bold; display:block; text-align:left;">新しいテーマ</label>
+                        <div class="theme-edit-row">
+                            <input type="text" id="modalNewTheme" placeholder="新しいテーマ">
+                            <button id="btnChangeTheme" type="button">変更</button>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>🐾 訪問者の猫追加設定</summary>
+                    <div class="admin-section-content">
+                        <label style="font-size:0.85rem; font-weight:bold; display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="disableCatAddition" style="width:auto; margin:0;">
+                            訪問者の猫追加を禁止する
+                        </label>
+                        <div id="catAdditionStatus" style="font-size:0.75rem; color:#64748b; margin-top:7px;">現在、訪問者も猫を追加できます。</div>
+                        <button id="btnSaveCatAddition" style="width:100%; margin-top:7px; background:#64748b; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">追加設定を保存</button>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>🐈 猫の個別管理（固定・サヨナラ）</summary>
+                    <div class="admin-section-content">
+                        <div id="catManageList" class="cat-manage-list">
+                            <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">管理コードを確認しています</div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="admin-section">
+                    <summary>⚙️ その他設定</summary>
+                    <div class="admin-section-content">
+                        <div class="modal-btn-group quiet-action-buttons" style="margin-top:8px;">
+                            <button id="btnClearCats">🐾 猫を解散（ぜんぶ逃がす）</button>
+                            <button id="btnDeleteRoom">🏠 部屋を解散（TOPへ戻る）</button>
+                        </div>
+                    </div>
+                </details>
+            </div>
+
+            <div id="secretCatLimitBox" class="hidden" style="margin-top:10px; text-align:left; background:#fff7ed; padding:10px; border-radius:8px; border:1px solid #fdba74;">
+                <label style="font-size:0.8rem; font-weight:bold; color:#c2410c;">🔒 [裏設定] 猫の最大表示数（専用コード）:</label>
+                <select id="modalCatLimit" style="margin-top:4px;">
+                    <option value="10">10 匹</option>
+                    <option value="20" selected>20 匹（標準）</option>
+                    <option value="30">30 匹</option>
+                    <option value="50">50 匹</option>
+                    <option value="999">無制限 ♾️</option>
+                </select>
+                <button id="btnSaveCatLimit" style="width:100%; margin-top:5px; background:#ea580c; color:white; padding:8px; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">上限数を更新する</button>
+            </div>
+
+            <div class="modal-btn-group">
+                <button id="btnCloseModal" style="background:#e5e7eb; color:#333;">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="roomShareModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="roomShareTitle">
+        <div class="modal-content">
+            <h3 id="roomShareTitle">🔗 友達と部屋を共有</h3>
+            <section class="share-section" aria-label="友達と共有">
+                <p>この部屋専用のURLを友達に送ると、同じ広場に参加できます。</p>
+                <div id="shareRoomUrl" class="share-url"></div>
+                <div class="share-actions" style="margin-top:8px;">
+                    <button id="btnCopyRoomUrl" type="button">📋 URLをコピー</button>
+                    <button id="btnShowRoomQr" class="secondary" type="button">▦ QRコード</button>
+                </div>
+                <div id="shareStatus" class="share-status" aria-live="polite"></div>
+            </section>
+            <div class="modal-btn-group">
+                <button id="btnCloseShareModal" style="background:#e5e7eb; color:#333;">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="roomQrModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="roomQrTitle">
+        <div class="modal-content">
+            <h3 id="roomQrTitle">📱 部屋をQRコードで共有</h3>
+            <p style="font-size:.8rem; color:#64748b;">友達に読み取ってもらうと、この部屋に参加できます。</p>
+            <img id="roomQrImage" class="qr-image" alt="この部屋に参加するためのQRコード">
+            <div id="roomQrUrl" class="share-url"></div>
+            <div class="modal-btn-group">
+                <button id="btnCloseRoomQr" style="background:#e5e7eb; color:#333;">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="support-box">
+        <div class="support-text">サーバー代のご支援いただけると、大変たすかりますニャ🐱</div>
+        <a class="ofuse-btn" href="https://ofuse.me/o?uid=231659" target="_blank" rel="noopener noreferrer">💙 OFUSEで応援を送る</a>
+    </div>
+
+    <script>
+        const catTypes = [
+            'black', 'cream', 'gray', 'kiji_tabby', 'longhair',
+            'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
+        ];
+
+        // 猫画像を先読みして、表示時に画像が後から描き足されるのを防ぐ。
+        // まず通常画像を優先し、読み込み完了後にhappy画像をバックグラウンドで読む。
+        const catImageCache = new Map();
+        function preloadCatImages() {
+            const loadImage = (url, priority) => new Promise(resolve => {
+                if (catImageCache.has(url)) return resolve(catImageCache.get(url));
+                const img = new Image();
+                catImageCache.set(url, img);
+                try { img.fetchPriority = priority; } catch (_) {}
+                img.onload = img.onerror = () => resolve(img);
+                img.src = url;
+                if (img.complete) resolve(img);
+            });
+            const normalImages = catTypes.map(type => `/neko_icon/cat_${type}_normal.png`);
+            const happyImages = catTypes.map(type => `/neko_icon/cat_${type}_happy.png`);
+            Promise.all(normalImages.map(url => loadImage(url, 'high')))
+                .then(() => Promise.all(happyImages.map(url => loadImage(url, 'low'))));
+        }
+        preloadCatImages();
+
+        // TOP下部の猫はランダムな種類・順番で並び、表情も不定期に変わる。
+        function initTopCatGarden() {
+            const garden = document.getElementById('topCatGarden');
+            const lobby = document.getElementById('lobby');
+            if (!garden || !lobby || currentRoom) return;
+
+            garden.replaceChildren();
+            const viewportW = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+            const viewportH = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+            const lobbyRect = lobby.getBoundingClientRect();
+            const header = document.querySelector('header');
+            const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+            const safeTop = Math.max(headerBottom + 8, 8);
+            const safeBottom = Math.max(8, viewportH - 8);
+            const count = 3 + Math.floor(Math.random() * 5);
+            const sizeChoices = [
+                { fish: 5, scale: 1.15 },
+                { fish: 10, scale: 1.30 },
+                { fish: 20, scale: 1.50 }
+            ];
+            const placed = [];
+            const cats = Array.from({ length: count }, (_, i) => ({
+                type: catTypes[Math.floor(Math.random() * catTypes.length)],
+                size: 45 * sizeChoices[Math.floor(Math.random() * sizeChoices.length)].scale,
+                fishSize: 0,
+                index: i,
+                delay: -Math.random() * 5,
+                duration: 3.8 + Math.random() * 3.8,
+                tilt: -4 + Math.random() * 8
+            }));
+
+            // 猫の矩形がロビーや既に置いた猫とぶつからない候補だけを採用。
+            const intersects = (a, b, gap = 8) =>
+                a.left < b.left + b.width + gap &&
+                a.left + a.width + gap > b.left &&
+                a.top < b.top + b.height + gap &&
+                a.top + a.height + gap > b.top;
+
+            function candidateIsClear(rect) {
+                const lobbyBox = {
+                    left: lobbyRect.left - 3, top: lobbyRect.top - 3,
+                    width: lobbyRect.width + 6, height: lobbyRect.height + 6
+                };
+                if (intersects(rect, lobbyBox, 0)) return false;
+                if (placed.some(p => intersects(rect, p, 8))) return false;
+                return true;
             }
 
-            new_ids = {
-                str(cat.get('id'))
-                for cat in data
-                if isinstance(cat, dict) and cat.get('id') is not None
+            // 猫はTOPメニューの下側だけに配置。上側には出さない。
+            // 下の応援ボックスがある場合は、猫がその上に重ならないよう避ける。
+            const supportBox = document.querySelector('.support-box');
+            const supportRect = supportBox ? supportBox.getBoundingClientRect() : null;
+            cats.forEach((cat, i) => {
+                let chosen = null;
+                const size = cat.size;
+                const minY = Math.max(lobbyRect.bottom + 10, safeTop);
+                const maxY = Math.min(viewportH - size - 8,
+                    supportRect ? supportRect.top - size - 8 : viewportH - size - 8);
+                if (maxY < minY) return;
+
+                // 猫はメニューの横幅を中心に、左右へ猫2匹分ほどだけ広げる。
+                // 画面の端まで散らばらないよう、横方向の範囲を固定してジグザグ配置。
+                const maxCatSize = 45 * 1.50;
+                const spread = maxCatSize * 2; // メニュー左右それぞれ約2匹分
+                const rangeLeft = Math.max(5, lobbyRect.left - spread);
+                const rangeRight = Math.min(viewportW - size - 5, lobbyRect.right + spread - size);
+                const usableWidth = Math.max(0, rangeRight - rangeLeft);
+                const targetX = count <= 1 ? (rangeLeft + rangeRight) / 2 :
+                    rangeLeft + usableWidth * (i / (count - 1));
+                // 縦方向もメニュー直下の数段にまとめ、ゆるいジグザグにする。
+                const rowGap = Math.max(18, size * 0.72);
+                const row = i % 3;
+                const targetY = Math.min(maxY, minY + row * rowGap);
+                for (let attempt = 0; attempt < 420; attempt++) {
+                    let x = targetX + (Math.random() - 0.5) * Math.min(size * 0.65, 38);
+                    let y = targetY + (Math.random() - 0.5) * Math.min(size * 0.55, 30);
+                    x = Math.max(rangeLeft, Math.min(rangeRight, x));
+                    y = Math.max(minY, Math.min(maxY, y));
+                    const rect = { left: x, top: y, width: size, height: size };
+                    if (candidateIsClear(rect)) {
+                        if (supportRect && intersects(rect, {
+                            left: supportRect.left, top: supportRect.top,
+                            width: supportRect.width, height: supportRect.height
+                        }, 4)) continue;
+                        chosen = rect;
+                        break;
+                    }
+                }
+                // 画面が狭く全匹置けない場合は、重ねずに置ける猫だけ表示。
+                if (!chosen) return;
+                cat.left = chosen.left;
+                cat.top = chosen.top;
+                placed.push(chosen);
+            });
+
+            cats.forEach(cat => {
+                if (!Number.isFinite(cat.left) || !Number.isFinite(cat.top)) return;
+
+                const wrap = document.createElement('div');
+                wrap.className = 'top-garden-cat';
+                wrap.setAttribute('role', 'button');
+                wrap.setAttribute('tabindex', '0');
+                wrap.setAttribute('aria-label', '猫におさかなをあげる。ドラッグして動かせます');
+                wrap.style.left = `${cat.left}px`;
+                wrap.style.top = `${cat.top}px`;
+                wrap.style.setProperty('--top-cat-size', `${cat.size}px`);
+                wrap.style.setProperty('--float-duration', `${cat.duration}s`);
+                wrap.style.setProperty('--float-delay', `${cat.delay}s`);
+                wrap.style.setProperty('--tilt', `${cat.tilt}deg`);
+
+                const img = document.createElement('img');
+                img.alt = '';
+                img.draggable = false;
+                wrap.appendChild(img);
+                garden.appendChild(wrap);
+
+                let faceTimer = null;
+                let dragging = false;
+                let pointerStart = null;
+                let grabOffset = { x: 0, y: 0 };
+                let lastPointer = null;
+
+                const setFace = face => {
+                    img.onerror = () => {
+                        img.onerror = null;
+                        img.src = `/neko_icon/cat_${cat.type}_normal.png`;
+                    };
+                    img.src = `/neko_icon/cat_${cat.type}_${face}.png`;
+                };
+                const randomFace = () => ['normal', 'happy', 'sad'][Math.floor(Math.random() * 3)];
+                const changeFace = () => {
+                    setFace(randomFace());
+                    faceTimer = setTimeout(changeFace, 4500 + Math.random() * 9000);
+                };
+                changeFace();
+
+                const feedTopCat = (x, y) => {
+                    clearTimeout(faceTimer);
+                    setFace('happy'); // TOPでは魚をあげたら必ずニコニコ
+                    wrap.classList.remove('is-happy-pop');
+                    void wrap.offsetWidth;
+                    wrap.classList.add('is-happy-pop');
+                    createPopEffect(x, y, '🐟'); // 表示は +1 🐟 のみ。食べた数は表示しない
+                    faceTimer = setTimeout(changeFace, 1600);
+                };
+
+                wrap.addEventListener('pointerdown', e => {
+                    if (e.button !== undefined && e.button !== 0) return;
+                    e.preventDefault();
+                    pointerStart = { x: e.clientX, y: e.clientY };
+                    const r = wrap.getBoundingClientRect();
+                    grabOffset = { x: e.clientX - r.left, y: e.clientY - r.top };
+                    lastPointer = { x: e.clientX, y: e.clientY };
+                    dragging = false;
+                    try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+                });
+
+                wrap.addEventListener('pointermove', e => {
+                    if (!pointerStart || !lastPointer) return;
+                    const dx = e.clientX - pointerStart.x;
+                    const dy = e.clientY - pointerStart.y;
+                    if (!dragging && Math.hypot(dx, dy) > 6) {
+                        dragging = true;
+                        wrap.classList.add('is-dragging');
+                    }
+                    if (!dragging) return;
+
+                    const size = cat.size;
+                    let x = Math.max(4, Math.min(viewportW - size - 4, e.clientX - grabOffset.x));
+                    let y = Math.max(safeTop, Math.min(safeBottom - size, e.clientY - grabOffset.y));
+                    const proposed = { left: x, top: y, width: size, height: size };
+                    const lobbyBox = {
+                        left: lobbyRect.left - 3, top: lobbyRect.top - 3,
+                        width: lobbyRect.width + 6, height: lobbyRect.height + 6
+                    };
+                    const otherCats = Array.from(garden.querySelectorAll('.top-garden-cat'))
+                        .filter(el => el !== wrap)
+                        .map(el => {
+                            const r = el.getBoundingClientRect();
+                            return { left: r.left, top: r.top, width: r.width, height: r.height };
+                        });
+                    if (!intersects(proposed, lobbyBox, 0) && !otherCats.some(r => intersects(proposed, r, 8))) {
+                        wrap.style.left = `${x}px`;
+                        wrap.style.top = `${y}px`;
+                    }
+                    lastPointer = { x: e.clientX, y: e.clientY };
+                });
+
+                const finishPointer = e => {
+                    if (!pointerStart) return;
+                    const wasDragging = dragging;
+                    pointerStart = null;
+                    lastPointer = null;
+                    dragging = false;
+                    wrap.classList.remove('is-dragging');
+                    if (!wasDragging) feedTopCat(e.clientX, e.clientY);
+                };
+                wrap.addEventListener('pointerup', finishPointer);
+                wrap.addEventListener('pointercancel', () => {
+                    pointerStart = null; lastPointer = null; dragging = false;
+                    wrap.classList.remove('is-dragging');
+                });
+                wrap.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        const r = wrap.getBoundingClientRect();
+                        feedTopCat(r.left + r.width / 2, r.top + r.height / 2);
+                    }
+                });
+            });
+        }
+
+        const randomThemes = [
+            "今日あったうれしい事",
+            "あした晴れるかな？",
+            "夜ご飯に何食べたい？",
+            "最近のイチオシ",
+            "最近ハマッてる事"
+        ];
+        const secretAnimals = [
+            { icon: '🐼', keys: ['🐼', '@パンダ', '（パンダ）', '(パンダ)'] },
+            { icon: '🐹', keys: ['🐹', '@ハム', '（ハム）', '(ハム)'] },
+            { icon: '🐧', keys: ['🐧', '@ペンギン', '（ペンギン）', '(ペンギン)'] },
+            { icon: '🐰', keys: ['🐰', '@ウサギ', '（ウサギ）', '(ウサギ)'] },
+            { icon: '🐤', keys: ['🐤', '@ひよこ', '（ひよこ）', '(ひよこ)'] },
+            { icon: '🧟', keys: ['🧟', '@ゾンビ', '（ゾンビ）', '(ゾンビ)'] }
+        ];
+
+        let comments = [];
+        let roomConfig = { max_cats: 20, fish_limit: 3, cat_addition_disabled: false };
+        let verifiedAdminCode = '';
+        let saveQueue = Promise.resolve();
+        let pendingSaves = 0;
+        let lastServerSnapshot = '';
+        let roomClearVersion = 0;
+        let dragState = null;
+        let suppressNextCatClick = false;
+        let isAnimating = false;
+        let isClearingCats = false;
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentRoom = urlParams.get('room');
+
+        function applyColorTheme(color) {
+            document.body.className = '';
+            if (color && color !== 'yellow' && color !== 'random') {
+                document.body.classList.add(`theme-${color}`);
+            }
+        }
+
+        // TOP画面では選択変更時にテーマカラーを即時プレビュー
+        const colorSelect = document.getElementById('inColor');
+        colorSelect.addEventListener('change', () => {
+            const selected = colorSelect.value;
+            applyColorTheme(selected === 'random' ? 'yellow' : selected);
+        });
+
+        function parseCommand(text) {
+            let targetIcon = null;
+            let cleanText = text;
+            for (const item of secretAnimals) {
+                for (const key of item.keys) {
+                    if (cleanText.endsWith(key)) {
+                        targetIcon = item.icon;
+                        cleanText = cleanText.slice(0, -key.length).trim();
+                        break;
+                    }
+                }
+                if (targetIcon) break;
+            }
+            return { cleanText, targetIcon };
+        }
+
+        document.getElementById('createRoomBtn').addEventListener('click', async () => {
+            let name = '猫の散歩道';
+            let theme = document.getElementById('inTheme').value.trim();
+            let code = document.getElementById('inCode').value.trim();
+            let color = document.getElementById('inColor').value;
+
+            if (color === 'random') {
+                const colors = ['yellow', 'mint', 'blue', 'purple', 'pink'];
+                color = colors[Math.floor(Math.random() * colors.length)];
             }
 
-            if (
-                room.get('info', {}).get('cat_addition_disabled', False)
-                and not new_ids.issubset(old_ids)
-            ):
-                return jsonify({
-                    'status': 'error',
-                    'message': 'この部屋では猫の追加が禁止されています'
-                }), 403
+            const fishLimit = parseInt(document.getElementById('inFishLimit').value, 10);
 
-            # いなくなった猫の座標を空き場所として保存し、
-            # 新しい猫に優先的に再利用する。
-            free_positions = room.setdefault('free_positions', [])
+            if (!theme) theme = randomThemes[Math.floor(Math.random() * randomThemes.length)];
+            if (!code) code = "1111";
 
-            removed = [
-                cat for cat in existing
-                if isinstance(cat, dict)
-                and cat.get('id') is not None
-                and str(cat.get('id')) not in new_ids
-            ]
+            if (!/^\d{4}$/.test(code)) {
+                alert("管理コードは4桁の数字で入力してください。");
+                return;
+            }
 
-            for cat in removed:
-                x, y = cat.get('x'), cat.get('y')
+            const res = await fetch('/api/create_room', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, theme, code, color, fish_limit: fishLimit })
+            });
 
-                if (
-                    isinstance(x, (int, float))
-                    and isinstance(y, (int, float))
-                    and math.isfinite(x)
-                    and math.isfinite(y)
-                ):
-                    free_positions.append({
-                        'x': float(x),
-                        'y': float(y)
-                    })
+            const data = await res.json();
 
-            free_positions[:] = free_positions[-200:]
+            if (data.status === 'ok') {
+                window.location.href = '?room=' + encodeURIComponent(data.room_id);
+            } else {
+                alert(data.message || "作成に失敗しました。");
+            }
+        });
 
-            saved_cats = [
-                dict(cat) if isinstance(cat, dict) else cat
-                for cat in data
-            ]
+        function getCatGrowthScale(likes) {
+            const n = Number(likes) || 0;
+            if (n >= 100) return 2.20;
+            if (n >= 50) return 1.90;
+            if (n >= 30) return 1.70;
+            if (n >= 20) return 1.50;
+            if (n >= 10) return 1.30;
+            if (n >= 5) return 1.15;
+            return 1.00;
+        }
 
-            for cat in saved_cats:
-                if not isinstance(cat, dict):
-                    continue
+        function applyCatGrowth(catItem, likes) {
+            const scale = getCatGrowthScale(likes);
+            const body = catItem?.querySelector('.cat-body-wrap');
+            const bubble = catItem?.querySelector('.cat-bubble');
+            if (body) body.style.transform = `scale(${scale})`;
+            // 猫の頭が大きくなる分、吹き出しも上へ逃がして文字の重なりを防ぐ。
+            if (bubble) bubble.style.transform = `translateY(-${(scale - 1) * 2.8}rem)`;
+        }
 
-                cat_id = cat.get('id')
+        // 現在の猫の位置を見て、空いているグリッド位置を優先して使う。
+        function findOpenCatPosition(stage) {
+            const width = stage.clientWidth || window.innerWidth;
+            const height = stage.clientHeight || 400;
+            const cols = width < 480 ? 3 : 4;
+            const cellW = width / cols;
+            const cellH = Math.max(115, Math.min(175, height / 3));
+            const rows = Math.max(2, Math.floor(height / cellH));
+            const candidates = [];
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    candidates.push({
+                        x: Math.max(4, Math.min(width - 90, c * cellW + (cellW - 80) / 2)),
+                        y: Math.max(4, Math.min(height - 110, r * cellH + 8))
+                    });
+                }
+            }
+            if (!comments.length) return candidates[Math.floor(candidates.length / 2)] || { x: 20, y: 20 };
+            let best = candidates[0];
+            let bestDistance = -1;
+            for (const candidate of candidates) {
+                let nearest = Infinity;
+                for (const cat of comments) {
+                    const dx = candidate.x - (Number(cat.x) || 0);
+                    const dy = candidate.y - (Number(cat.y) || 0);
+                    nearest = Math.min(nearest, Math.hypot(dx, dy));
+                }
+                if (nearest > bestDistance) { bestDistance = nearest; best = candidate; }
+                if (nearest > Math.min(cellW * 0.55, 105)) return candidate;
+            }
+            return best || { x: 20, y: 20 };
+        }
 
-                if (
-                    cat_id is not None
-                    and str(cat_id) not in old_ids
-                    and free_positions
-                ):
-                    position = free_positions.pop(0)
-                    cat['x'] = position['x']
-                    cat['y'] = position['y']
+        // 通常の猫は、猫種ごとの画像を表示する。既存データにcat_typeがない場合も
+        // IDから決定的に選ぶため、同じ猫は参加者全員の画面で同じ見た目になる。
+        function getCatType(item, key) {
+            if (item.cat_type && catTypes.includes(item.cat_type)) return item.cat_type;
+            let hash = 0;
+            for (let i = 0; i < String(key).length; i++) {
+                hash = (hash * 31 + String(key).charCodeAt(i)) | 0;
+            }
+            return catTypes[Math.abs(hash) % catTypes.length];
+        }
 
-            room['cats'] = saved_cats
-            room['updated_at'] = _now().isoformat()
+        function updateCatAppearance(catItem, item, key) {
+            const body = catItem.querySelector('.cat-body-wrap');
+            if (!body) return;
 
-            return jsonify({
-                'status': 'ok',
-                'clear_version': server_clear_version,
-                'cats': saved_cats
-            })
+            const isSecret = secretAnimals.some(animal => animal.icon === item.icon);
+            if (isSecret) {
+                if (catItem.dataset.appearance !== `secret:${item.icon}`) {
+                    body.replaceChildren(document.createTextNode(item.icon));
+                    catItem.dataset.appearance = `secret:${item.icon}`;
+                }
+                return;
+            }
 
-    return jsonify({'status': 'error'}), 400
+            const catType = getCatType(item, key);
+            const happyUntil = Number(item.happy_until) || 0;
+            const isHappy = happyUntil > Date.now();
+            const expression = isHappy ? 'happy' : 'normal';
+            const appearanceKey = `${catType}:${expression}`;
 
+            let img = body.querySelector('img.cat-avatar');
+            if (!img) {
+                img = document.createElement('img');
+                img.className = 'cat-avatar';
+                img.alt = 'ねこ';
+                img.draggable = false;
+                body.replaceChildren(img);
+            }
 
-# ==========================================
-# 部屋の管理操作
-# ==========================================
+            if (catItem.dataset.appearance !== appearanceKey) {
+                img.src = `/neko_icon/cat_${catType}_${expression}.png`;
+                img.classList.toggle('is-happy', isHappy);
+                catItem.dataset.appearance = appearanceKey;
+            }
 
-@app.route('/api/room_action', methods=['POST'])
-def room_action():
-    data = request.get_json(silent=True) or {}
+            // サーバー更新を受け取った側でも、happy表示が期限切れになったらnormalへ戻す。
+            if (isHappy && catItem.dataset.happyTimer !== String(happyUntil)) {
+                catItem.dataset.happyTimer = String(happyUntil);
+                const expectedUntil = happyUntil;
+                setTimeout(() => {
+                    if (!catItem.isConnected) return;
+                    if (Number(catItem.dataset.happyTimer) !== expectedUntil) return;
+                    if (Date.now() < expectedUntil) {
+                        setTimeout(() => updateCatAppearance(catItem, item, key),
+                            expectedUntil - Date.now() + 20);
+                        return;
+                    }
+                    const current = comments.find((cat, i) =>
+                        String(cat.id ?? `legacy-${i}`) === String(key)
+                    );
+                    if (current) updateCatAppearance(catItem, current, key);
+                }, Math.max(0, happyUntil - Date.now()) + 20);
+            }
+        }
 
-    room_id = data.get('room')
-    action = data.get('action')
-    code = str(data.get('code', ''))
+        // rxは画面幅に対する基準位置、rwはその位置を記録した画面幅。
+        // 狭い画面では中央を保ちつつ、端にいる猫ほど画面端へ強めに寄せる。
+        const EDGE_PULL_STRENGTH = 0.42; // 0=従来の一律比率、1=端への引き寄せを強くする
+        function applyResponsiveCatPosition(item, catItem, stage) {
+            const width = stage.clientWidth || window.innerWidth;
+            const height = stage.clientHeight || 400;
+            const maxX = Math.max(0, width - (catItem.offsetWidth || 45));
+            const maxY = Math.max(0, height - (catItem.offsetHeight || 45));
 
-    with locked_db() as db:
-        if room_id not in db:
-            return jsonify({
-                'status': 'error',
-                'message': '部屋が存在しません'
-            }), 404
+            if (!Number.isFinite(Number(item.rx))) {
+                const oldX = Number.isFinite(Number(item.x)) ? Number(item.x) : width * 0.5;
+                item.rx = oldX / Math.max(1, width);
+            }
+            if (!Number.isFinite(Number(item.ry))) {
+                const oldY = Number.isFinite(Number(item.y)) ? Number(item.y) : height * 0.5;
+                item.ry = oldY / Math.max(1, height);
+            }
+            if (item.rpos_v !== 2) {
+                // 旧版rxは猫の左端基準だったため、中央基準へ一度だけ移行する。
+                // 旧データに基準幅がない場合、スマホではPC幅を仮の基準にする。
+                const legacyWidth = (Number.isFinite(Number(item.rw)) && Number(item.rw) > 0)
+                    ? Number(item.rw) : (width < 600 ? 1200 : width);
+                item.rx = (Number(item.rx) * legacyWidth + (catItem.offsetWidth || 45) / 2) / legacyWidth;
+                item.rw = legacyWidth;
+                item.rpos_v = 2;
+            } else if (!Number.isFinite(Number(item.rw)) || Number(item.rw) <= 0) {
+                item.rw = width;
+            }
 
-        room_info = db[room_id]['info']
+            const baseX = Math.max(0, Math.min(1, Number(item.rx)));
+            const referenceWidth = Math.max(1, Number(item.rw));
+            const widthRatio = width / referenceWidth;
+            const centeredDistance = Math.min(1, Math.abs(baseX - 0.5) * 2);
+            let adjustedDistance = centeredDistance;
 
-        # 通常操作は部屋ごとの管理コードで照合。
-        # 猫の最大表示数変更だけは、裏設定コード「0518」でも許可する。
-        valid_code = room_info['code'] == code
+            if (widthRatio < 1) {
+                // スマホなど狭い画面：中央付近はほぼ維持し、端ほど外側へ広げる。
+                const exponent = Math.max(0.55, 1 - EDGE_PULL_STRENGTH * (1 - widthRatio));
+                adjustedDistance = Math.pow(centeredDistance, exponent);
+            } else if (widthRatio > 1) {
+                // 広い画面へ戻したときは逆方向に圧縮し、元の配置に近づける。
+                const exponent = 1 + EDGE_PULL_STRENGTH * (1 - 1 / widthRatio);
+                adjustedDistance = Math.pow(centeredDistance, exponent);
+            }
 
-        if action == 'change_max_cats' and code == SECRET_CAT_LIMIT_CODE:
-            valid_code = True
+            const mappedX = 0.5 + (baseX < 0.5 ? -1 : 1) * adjustedDistance * 0.5;
+            const x = Math.max(0, Math.min(maxX, mappedX * width - (catItem.offsetWidth || 45) / 2));
+            const y = Math.max(0, Math.min(maxY, Number(item.ry) * height));
+            catItem.style.left = x + 'px';
+            catItem.style.top = y + 'px';
+            item.x = x;
+            item.y = y;
+        }
 
-        if not valid_code:
-            return jsonify({
-                'status': 'error',
-                'message': '管理コードが正しくありません'
-            }), 403
+        function renderComments() {
+            const stage = document.getElementById('stage');
+            const stageWidth = stage.clientWidth || window.innerWidth;
+            const stageHeight = stage.clientHeight || 400;
 
-        # ----------------------------------
-        # 部屋の削除
-        # ----------------------------------
+            const existingCats = new Map(
+                Array.from(stage.querySelectorAll('.cat-item')).map(el => [el.dataset.catKey, el])
+            );
+            const activeKeys = new Set();
 
-        if action == 'delete':
-            del db[room_id]
+            const count = comments.length;
+            const cols = Math.min(Math.ceil(Math.sqrt(count * 1.5)), stageWidth < 480 ? 3 : 4);
+            const rows = Math.ceil(count / (cols || 1));
+            const cellWidth = stageWidth / (cols || 1);
+            const cellHeight = stageHeight / (rows || 1);
 
-            return jsonify({
-                'status': 'ok',
-                'action': 'delete'
-            })
+            comments.forEach((item, index) => {
+                const key = String(item.id ?? `legacy-${index}`);
+                activeKeys.add(key);
 
-        # ----------------------------------
-        # 猫の追加禁止設定
-        # ----------------------------------
+                let catItem = existingCats.get(key);
+                const isNew = !catItem;
 
-        elif action == 'change_cat_addition':
-            disabled = bool(data.get('disabled', False))
+                if (isNew) {
+                    catItem = document.createElement('div');
+                    catItem.className = 'cat-item';
+                    catItem.dataset.catKey = key;
 
-            room_info['cat_addition_disabled'] = disabled
-            db[room_id]['updated_at'] = _now().isoformat()
+                    const c = index % cols;
+                    const r = Math.floor(index / cols);
+                    const randomX = Math.random() * (cellWidth * 0.2) + (cellWidth * 0.05);
+                    const randomY = Math.random() * (cellHeight * 0.2) + (cellHeight * 0.05);
 
-            return jsonify({
-                'status': 'ok',
-                'action': action,
-                'cat_addition_disabled': disabled
-            })
+                    const initialX = Number.isFinite(Number(item.x)) ? Number(item.x) : (c * cellWidth + randomX);
+                    const initialY = Number.isFinite(Number(item.y)) ? Number(item.y) : (r * cellHeight + randomY);
+                    if (!Number.isFinite(Number(item.rx))) item.rx = (initialX + 22.5) / Math.max(1, stageWidth);
+                    if (!Number.isFinite(Number(item.ry))) item.ry = initialY / Math.max(1, stageHeight);
+                    if (!Number.isFinite(Number(item.rw)) || Number(item.rw) <= 0) item.rw = stageWidth;
+                    catItem.style.left = initialX + 'px';
+                    catItem.style.top = initialY + 'px';
 
-        # ----------------------------------
-        # 猫を全て削除
-        # ----------------------------------
+                    catItem.innerHTML = `
+                        <div class="cat-motion">
+                            <div class="cat-bubble">
+                                <div class="bubble-text"></div>
+                                <div class="bubble-footer">🐟 <span class="like-count"></span></div>
+                            </div>
+                            <div class="cat-body-wrap"></div>
+                        </div>
+                    `;
 
-        elif action == 'clear_cats':
-            room = db[room_id]
-            free_positions = room.setdefault('free_positions', [])
+                    const motion = catItem.querySelector('.cat-motion');
+                    const animName = index % 2 === 0 ? 'walkSmooth1' : 'walkSmooth2';
+                    const animDuration = 8 + (index % 3) * 2;
+                    const phase = Math.random() * animDuration;
 
-            for cat in room.get('cats', []):
-                if isinstance(cat, dict):
-                    x, y = cat.get('x'), cat.get('y')
+                    motion.style.animation = `${animName} ${animDuration}s ${-phase}s infinite ease-in-out`;
 
-                    if (
-                        isinstance(x, (int, float))
-                        and isinstance(y, (int, float))
-                        and math.isfinite(x)
-                        and math.isfinite(y)
-                    ):
-                        free_positions.append({
-                            'x': float(x),
-                            'y': float(y)
-                        })
+                    catItem.addEventListener('click', (e) => {
+                        if (suppressNextCatClick) { suppressNextCatClick = false; return; }
+                        const currentIndex = comments.findIndex((c, i) =>
+                            String(c.id ?? `legacy-${i}`) === catItem.dataset.catKey
+                        );
+                        if (currentIndex < 0) return;
 
-            free_positions[:] = free_positions[-200:]
+                        const currentItem = comments[currentIndex];
 
-            room['cats'] = []
-            room['clear_version'] = int(
-                room.get('clear_version', 0)
-            ) + 1
+                        if (roomConfig.fish_limit < 999) {
+                            const today = new Date().toISOString().split('T')[0];
+                            const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
+                            let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
 
-            db[room_id]['updated_at'] = _now().isoformat()
+                            if (savedDate !== today) {
+                                usedFish = 0;
+                                localStorage.setItem(`fish_date_${currentRoom}`, today);
+                            }
 
-            return jsonify({
-                'status': 'ok',
-                'action': 'clear_cats',
-                'clear_version': db[room_id]['clear_version']
-            })
+                            if (usedFish >= roomConfig.fish_limit) {
+                                alert("🐾 今日のおさかなはなくなっちゃった！（また明日ね）");
+                                return;
+                            }
 
-        # ----------------------------------
-        # 部屋のテーマ変更
-        # ----------------------------------
+                            usedFish++;
+                            localStorage.setItem(`fish_used_${currentRoom}`, usedFish);
+                            updateFishBadgeDisplay();
+                        }
 
-        elif action == 'change_theme':
-            new_theme = str(
-                data.get('new_theme', '')
-            ).strip()[:30]
+                        currentItem.likes = (Number(currentItem.likes) || 0) + 1;
+                        // ほかの参加者にもhappy画像を同期できるよう、期限をデータに含める。
+                        currentItem.happy_until = Date.now() + 1600;
+                        updateCatAppearance(catItem, currentItem, catItem.dataset.catKey);
 
-            room_info['theme'] = new_theme
-            db[room_id]['updated_at'] = _now().isoformat()
+                        const countEl = catItem.querySelector('.like-count');
+                        if (countEl) countEl.textContent = currentItem.likes;
+                        applyCatGrowth(catItem, currentItem.likes);
 
-            return jsonify({
-                'status': 'ok',
-                'action': 'change_theme',
-                'new_theme': new_theme
-            })
+                        createPopEffect(e.clientX, e.clientY, catItem.dataset.likeIcon || '🐟');
+                        saveToServer();
+                    });
 
-        # ----------------------------------
-        # 猫の最大表示数変更
-        # ----------------------------------
+                    stage.appendChild(catItem);
+                    attachCatDrag(catItem);
+                }
 
-        elif action == 'change_max_cats':
-            try:
-                new_limit = int(data.get('max_cats', 20))
-            except (TypeError, ValueError):
-                return jsonify({
-                    'status': 'error',
-                    'message': '上限数の指定が正しくありません'
-                }), 400
+                // 画面幅・高さに応じて相対位置をpxへ変換し、ステージ外にはみ出さないようにする。
+                applyResponsiveCatPosition(item, catItem, stage);
 
-            if new_limit not in ALLOWED_CAT_LIMITS:
-                return jsonify({
-                    'status': 'error',
-                    'message': '指定できる上限数ではありません'
-                }), 400
+                const isSecret = secretAnimals.some(sa => sa.icon === item.icon);
+                const likeIcon = isSecret ? '❤️' : '🐟';
+                const pinMark = item.pinned ? '📌 ' : '';
 
-            room_info['max_cats'] = new_limit
-            db[room_id]['updated_at'] = _now().isoformat()
+                catItem.dataset.likeIcon = likeIcon;
 
-            return jsonify({
-                'status': 'ok',
-                'action': 'change_max_cats',
-                'max_cats': new_limit
-            })
+                const bubbleText = catItem.querySelector('.bubble-text');
+                const body = catItem.querySelector('.cat-body-wrap');
+                const footer = catItem.querySelector('.bubble-footer');
 
-    return jsonify({
-        'status': 'error',
-        'message': '無効な操作です'
-    }), 400
+                if (bubbleText) {
+                    bubbleText.textContent = pinMark + item.text;
+                    bubbleText.title = item.text;
+                }
 
+                if (body) updateCatAppearance(catItem, item, key);
 
-# ==========================================
-# サーバー起動
-# ==========================================
+                if (footer) {
+                    footer.innerHTML = `${likeIcon} <span class="like-count">${Number(item.likes) || 0}</span>`;
+                }
+                applyCatGrowth(catItem, item.likes);
+            });
 
-if __name__ == '__main__':
-    app.run(
-        host='0.0.0.0',
-        port=5000,
-        debug=True
-    )
+            existingCats.forEach((el, key) => {
+                if (!activeKeys.has(key)) el.remove();
+            });
+
+            updateFishBadgeDisplay();
+            updateCatManageList();
+        }
+
+        function updateCatAdditionUI() {
+            const input = document.getElementById('commentInput');
+            const button = document.getElementById('postBtn');
+            const disabled = !!roomConfig.cat_addition_disabled;
+            input.disabled = disabled;
+            button.disabled = disabled;
+            input.placeholder = disabled ? 'この部屋では猫の追加が禁止されています' : 'つぶやきを入力...';
+            button.style.opacity = disabled ? '0.45' : '1';
+            button.style.cursor = disabled ? 'not-allowed' : 'pointer';
+            document.getElementById('disableCatAddition').checked = disabled;
+            document.getElementById('catAdditionStatus').textContent = disabled
+                ? '現在、訪問者は猫を追加できません。管理コードで解除できます。'
+                : '現在、訪問者も猫を追加できます。';
+        }
+
+        function updateFishBadgeDisplay() {
+            const badge = document.getElementById('fishBadge');
+
+            if (roomConfig.fish_limit >= 999) {
+                badge.innerHTML = `🐟 食べ放題 (♾️)`;
+                return;
+            }
+
+            const today = new Date().toISOString().split('T')[0];
+            const savedDate = localStorage.getItem(`fish_date_${currentRoom}`);
+            let usedFish = parseInt(localStorage.getItem(`fish_used_${currentRoom}`) || '0', 10);
+
+            if (savedDate !== today) usedFish = 0;
+
+            const rem = Math.max(0, roomConfig.fish_limit - usedFish);
+            badge.innerHTML = `🐟 あと <span id="fishRemCount">${rem}</span> 匹`;
+        }
+
+        function showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = 'toast-notify';
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        async function fetchComments() {
+            if (!currentRoom || isAnimating || pendingSaves > 0 || dragState) return;
+            try {
+                const res = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                if (!res.ok) return;
+                const newComments = await res.json();
+                const serverClearVersion = Number(res.headers.get('X-Clear-Version'));
+                if (Number.isFinite(serverClearVersion)) roomClearVersion = serverClearVersion;
+                if (pendingSaves > 0 || dragState) return;
+
+                const snapshot = JSON.stringify(newComments);
+                if (snapshot === lastServerSnapshot || snapshot === JSON.stringify(comments)) return;
+
+                // 他の参加者がサヨナラさせた猫を検知し、こちらの画面でも逃走演出を再生する。
+                const newIds = new Set(newComments.map((cat, i) => String(cat.id ?? `legacy-${i}`)));
+                const removedCats = comments
+                    .map((cat, i) => ({ cat, id: String(cat.id ?? `legacy-${i}`), index: i }))
+                    .filter(entry => !newIds.has(entry.id));
+
+                const animatedElements = removedCats
+                    .map(entry => ({
+                        ...entry,
+                        element: Array.from(document.querySelectorAll('.cat-item'))
+                            .find(el => el.dataset.catKey === entry.id)
+                    }))
+                    .filter(entry => entry.element);
+
+                if (animatedElements.length > 0) {
+                    isAnimating = true;
+                    animatedElements.forEach((entry, i) => fleeCat(entry.element, entry.index + i));
+
+                    // fleeCatは💦表示後に逃げ始め、約2.1秒かけて画面外へ移動する。
+                    await new Promise(resolve => setTimeout(resolve, 2650));
+
+                    // 演出中に別の変更が入っている可能性があるため、最新状態を取り直す。
+                    const latestRes = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                    if (latestRes.ok) {
+                        const latestComments = await latestRes.json();
+                        const latestVersion = Number(latestRes.headers.get('X-Clear-Version'));
+                        if (Number.isFinite(latestVersion)) roomClearVersion = latestVersion;
+                        comments = latestComments;
+                        lastServerSnapshot = JSON.stringify(latestComments);
+                    } else {
+                        comments = newComments;
+                        lastServerSnapshot = snapshot;
+                    }
+                    isAnimating = false;
+                    renderComments();
+                    return;
+                }
+
+                comments = newComments;
+                lastServerSnapshot = snapshot;
+                renderComments();
+            } catch (e) {
+                isAnimating = false;
+                /* 一時的な通信失敗は次回ポーリングで再試行 */
+            }
+        }
+
+        // 同一ブラウザからの保存を必ず直列化し、古いスナップショットの後着を防ぐ
+        async function saveToServer() {
+            if (!currentRoom || isAnimating) return;
+            pendingSaves++;
+            saveQueue = saveQueue.then(async () => {
+                const snapshot = JSON.stringify(comments);
+                try {
+                    const res = await fetch(`/save?room=${encodeURIComponent(currentRoom)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Clear-Version': String(roomClearVersion) },
+                        body: snapshot
+                    });
+                    if (res.ok) {
+                        const saved = await res.json();
+                        if (Array.isArray(saved.cats)) {
+                            const sentCats = JSON.parse(snapshot);
+                            const sentById = new Map(sentCats.filter(c => c && c.id != null).map(c => [String(c.id), c]));
+                            const savedById = new Map(saved.cats.filter(c => c && c.id != null).map(c => [String(c.id), c]));
+                            let positionUpdated = false;
+                            comments.forEach(cat => {
+                                if (!cat || cat.id == null) return;
+                                const sent = sentById.get(String(cat.id));
+                                const stored = savedById.get(String(cat.id));
+                                if (!sent || !stored) return;
+                                // 送信後にドラッグされていない場合だけ、サーバーが割り当てた空き位置を反映。
+                                if (cat.x === sent.x && cat.y === sent.y && (cat.x !== stored.x || cat.y !== stored.y)) {
+                                    cat.x = stored.x;
+                                    cat.y = stored.y;
+                                    positionUpdated = true;
+                                }
+                            });
+                            lastServerSnapshot = JSON.stringify(saved.cats);
+                            if (positionUpdated) renderComments();
+                        } else {
+                            lastServerSnapshot = snapshot;
+                        }
+                    } else if (res.status === 409) {
+                        // 猫の解散前に送られた古い保存データは復活させず、サーバーの最新状態に合わせる。
+                        const latest = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                        if (latest.ok) {
+                            const serverCats = await latest.json();
+                            const version = Number(latest.headers.get('X-Clear-Version'));
+                            if (Number.isFinite(version)) roomClearVersion = version;
+                            comments = serverCats;
+                            lastServerSnapshot = JSON.stringify(serverCats);
+                            renderComments();
+                        }
+                        showToast('部屋の状態が更新されたため、最新の猫一覧に合わせました');
+                    } else if (res.status === 403) {
+                        showToast('この部屋では猫の追加が禁止されています');
+                    }
+                } catch (e) {
+                    showToast('保存に失敗しました。通信状態を確認してください');
+                } finally {
+                    pendingSaves = Math.max(0, pendingSaves - 1);
+                }
+            });
+            return saveQueue;
+        }
+
+        // Pointer Eventsでマウス・タッチの両方に対応
+        function attachCatDrag(catItem) {
+            catItem.addEventListener('pointerdown', (e) => {
+                if (e.button !== undefined && e.button !== 0) return;
+                if (e.target.closest('button')) return;
+                if (e.cancelable) e.preventDefault();
+
+                // 入力欄にフォーカスが残っているとキーボードが出たままになるので外す
+                const ae = document.activeElement;
+                if (ae && ['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName)) ae.blur();
+
+                // タッチ操作のときだけ拡大を付け、戻しタイマーは一旦止める
+                clearTimeout(catItem._activeTimer);
+                if (e.pointerType !== 'mouse') catItem.classList.add('touch-active');
+
+                const key = catItem.dataset.catKey;
+                const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === key);
+                if (idx < 0) return;
+                const rect = catItem.getBoundingClientRect();
+                dragState = { key, idx, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
+                    offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+                    startLeft: parseFloat(catItem.style.left) || 0, startTop: parseFloat(catItem.style.top) || 0,
+                    moved: false, element: catItem };
+                try { catItem.setPointerCapture(e.pointerId); } catch (_) {}
+            });
+            catItem.addEventListener('pointermove', (e) => {
+                if (!dragState || dragState.pointerId !== e.pointerId || dragState.element !== catItem) return;
+                const dx = e.clientX - dragState.startX, dy = e.clientY - dragState.startY;
+                if (Math.abs(dx) + Math.abs(dy) > 5) dragState.moved = true;
+                if (!dragState.moved) return;
+                catItem.classList.add('is-dragging');
+                const stageRect = document.getElementById('stage').getBoundingClientRect();
+                const maxX = Math.max(0, stageRect.width - catItem.offsetWidth);
+                const maxY = Math.max(0, stageRect.height - catItem.offsetHeight);
+                const x = Math.max(0, Math.min(maxX, dragState.startLeft + dx));
+                const y = Math.max(0, Math.min(maxY, dragState.startTop + dy));
+                catItem.style.left = x + 'px'; catItem.style.top = y + 'px';
+            });
+            const finish = (e) => {
+                if (!dragState || dragState.pointerId !== e.pointerId || dragState.element !== catItem) return;
+                const state = dragState; dragState = null;
+                catItem.classList.remove('is-dragging');
+
+                // 指を離してから1.5秒たっても次の操作がなければ元の大きさに戻す
+                if (e.pointerType !== 'mouse') {
+                    clearTimeout(catItem._activeTimer);
+                    catItem._activeTimer = setTimeout(() => {
+                        catItem.classList.remove('touch-active');
+                    }, 900);
+                }
+
+                if (state.moved) {
+                    const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === state.key);
+                    if (idx >= 0) {
+                        comments[idx].x = parseFloat(catItem.style.left) || 0;
+                        comments[idx].y = parseFloat(catItem.style.top) || 0;
+                        const stage = document.getElementById('stage');
+                        comments[idx].rx = (comments[idx].x + (catItem.offsetWidth || 45) / 2) / Math.max(1, stage.clientWidth);
+                        comments[idx].ry = comments[idx].y / Math.max(1, stage.clientHeight);
+                        comments[idx].rw = stage.clientWidth;
+                        suppressNextCatClick = true;
+                        saveToServer();
+                    }
+                }
+            };
+            catItem.addEventListener('pointerup', finish);
+            catItem.addEventListener('pointercancel', finish);
+            catItem.addEventListener('lostpointercapture', finish);
+        }
+
+        function createPopEffect(x, y, iconMark) {
+            const effect = document.createElement('div');
+            effect.className = 'pop-effect';
+            effect.textContent = `+1 ${iconMark}`;
+            effect.style.left = x + 'px';
+            effect.style.top = y + 'px';
+            document.body.appendChild(effect);
+            setTimeout(() => effect.remove(), 800);
+        }
+
+        function handlePost() {
+            if (isClearingCats) { showToast('猫の解散処理中です。少し待ってね'); return; }
+            if (roomConfig.cat_addition_disabled) {
+                showToast('この部屋では猫の追加が禁止されています');
+                return;
+            }
+            const input = document.getElementById('commentInput');
+            const rawText = input.value.trim();
+
+            if (!rawText) return;
+
+            const { cleanText, targetIcon } = parseCommand(rawText);
+
+            const stage = document.getElementById('stage');
+            comments.push({
+                id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                text: cleanText || rawText,
+                icon: targetIcon,
+                cat_type: targetIcon ? null : catTypes[Math.floor(Math.random() * catTypes.length)],
+                likes: 0,
+                pinned: false,
+                ...findOpenCatPosition(stage)
+            });
+
+            const maxAllowed = roomConfig.max_cats || 20;
+
+            if (comments.length > maxAllowed) {
+                let removeIdx = comments.findIndex(c => !c.pinned);
+
+                if (removeIdx !== -1) {
+                    comments.splice(removeIdx, 1);
+                    showToast("古い猫がバイバイしました 🐾");
+                }
+            }
+
+            renderComments();
+            saveToServer();
+            input.value = '';
+        }
+
+        document.getElementById('postBtn').addEventListener('click', handlePost);
+        document.getElementById('commentInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handlePost();
+        });
+
+        /* 設定モーダル＆猫の管理リスト描画 */
+        const modal = document.getElementById('settingsModal');
+        const modalCodeInput = document.getElementById('modalCode');
+        const secretBox = document.getElementById('secretCatLimitBox');
+        const catManageList = document.getElementById('catManageList');
+
+        // ★今回追加：管理コードの確認関数
+        function isAdminCodeValid() {
+            const code = modalCodeInput.value.trim();
+            return code !== '' && code === verifiedAdminCode;
+        }
+
+        function updateAdminControlsUI() {
+            const controls = document.getElementById('adminControls');
+            const status = document.getElementById('adminCodeStatus');
+            const valid = isAdminCodeValid();
+            controls.classList.toggle('locked', !valid);
+            controls.setAttribute('aria-disabled', valid ? 'false' : 'true');
+            status.textContent = valid
+                ? '管理コードを確認しました。項目を開いて設定できます。'
+                : '管理コードを入力すると、下の設定を操作できます。';
+        }
+
+        document.getElementById('settingsBtn').addEventListener('click', () => {
+            updateAdminControlsUI();
+            updateCatAdditionUI();
+            modal.classList.remove('hidden');
+        });
+
+        const roomShareModal = document.getElementById('roomShareModal');
+        document.getElementById('roomShareBtn').addEventListener('click', () => {
+            updateRoomShareUrl();
+            document.getElementById('shareStatus').textContent = '';
+            roomShareModal.classList.remove('hidden');
+        });
+        document.getElementById('btnCloseShareModal').addEventListener('click', () => {
+            roomShareModal.classList.add('hidden');
+        });
+        roomShareModal.addEventListener('click', (e) => {
+            if (e.target === roomShareModal) roomShareModal.classList.add('hidden');
+        });
+
+        document.getElementById('btnCloseModal').addEventListener('click', () => {
+            modal.classList.add('hidden');
+            secretBox.classList.add('hidden');
+            modalCodeInput.value = '';
+            verifiedAdminCode = '';
+            updateAdminControlsUI();
+            document.querySelectorAll('#adminControls details').forEach(section => { section.open = false; });
+
+            catManageList.innerHTML = `
+                <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                    コードを入れると一覧が出ます
+                </div>`;
+        });
+
+        modalCodeInput.addEventListener('input', async (e) => {
+            const code = e.target.value.trim();
+            verifiedAdminCode = '';
+            if (code === '0518') secretBox.classList.remove('hidden');
+            else secretBox.classList.add('hidden');
+
+            if (/^\d{4}$/.test(code)) {
+                try {
+                    const res = await fetch(`/api/verify_code?room=${encodeURIComponent(currentRoom)}&code=${encodeURIComponent(code)}`);
+                    const result = await res.json();
+                    if (modalCodeInput.value.trim() === code && result.valid) verifiedAdminCode = code;
+                } catch (_) {}
+            }
+            updateAdminControlsUI();
+            if (isAdminCodeValid()) {
+                try {
+                    await saveQueue;
+                    const latest = await fetch(`/data.json?room=${encodeURIComponent(currentRoom)}&t=${Date.now()}`, { cache: 'no-store' });
+                    if (latest.ok && modalCodeInput.value.trim() === code && isAdminCodeValid()) {
+                        comments = await latest.json();
+                        const version = Number(latest.headers.get('X-Clear-Version'));
+                        if (Number.isFinite(version)) roomClearVersion = version;
+                        lastServerSnapshot = JSON.stringify(comments);
+                        renderComments();
+                    }
+                } catch (_) {}
+                updateCatManageList();
+            } else {
+                catManageList.innerHTML = `
+                    <div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">
+                        管理コードを入力してください
+                    </div>`;
+            }
+        });
+
+        /* 猫管理リストの更新（管理コード確認つき） */
+        function updateCatManageList() {
+            if (!isAdminCodeValid()) {
+                catManageList.innerHTML = '<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">管理コードを入力してください</div>';
+                return;
+            }
+            if (comments.length === 0) {
+                catManageList.innerHTML = '<div style="padding:10px; text-align:center; color:#888; font-size:0.75rem;">いま猫はいません</div>';
+                return;
+            }
+            catManageList.innerHTML = '';
+            comments.forEach((item, index) => {
+                const id = String(item.id ?? `legacy-${index}`);
+                const div = document.createElement('div');
+                div.className = 'cat-manage-item';
+                const name = document.createElement('span');
+                name.textContent = `${item.icon || '🐱'} ${item.text || ''}`;
+                const pin = document.createElement('button');
+                pin.type = 'button';
+                pin.style.cssText = `background:${item.pinned ? '#10b981' : '#9ca3af'}; color:white;`;
+                pin.textContent = item.pinned ? '固定中' : '通常';
+                pin.addEventListener('click', () => togglePinById(id));
+                const bye = document.createElement('button');
+                bye.type = 'button';
+                bye.style.cssText = 'background:#ef4444; color:white;';
+                bye.textContent = 'サヨナラ';
+                bye.addEventListener('click', () => removeCatById(id));
+                div.append(name, pin, bye);
+                catManageList.appendChild(div);
+            });
+        }
+
+        window.togglePin = function(index) {
+            if (!isAdminCodeValid()) { alert('管理コードが違います。'); return; }
+            if (index < 0 || index >= comments.length) return;
+            togglePinById(String(comments[index].id ?? `legacy-${index}`));
+        };
+
+        function togglePinById(id) {
+            if (!isAdminCodeValid()) { alert('管理コードが違います。'); return; }
+            const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === id);
+            if (idx < 0) { updateCatManageList(); return; }
+            comments[idx].pinned = !comments[idx].pinned;
+            renderComments();
+            updateCatManageList();
+            saveToServer();
+        }
+
+        const fleeDirs = [
+            { x:  1, y: -1, rot:  30 },
+            { x: -1, y: -1, rot: -30 },
+            { x:  1, y:  1, rot:  30 },
+            { x: -1, y:  1, rot: -30 }
+        ];
+
+        function fleeCat(item, idx) {
+            const sweat = document.createElement('div');
+            sweat.className = 'sweat-mark';
+            sweat.textContent = '💦';
+
+            const catBody = item.querySelector('.cat-body-wrap');
+            (catBody || item).appendChild(sweat);
+
+            item.style.pointerEvents = 'none';
+
+            const motion = item.querySelector('.cat-motion');
+            if (motion) motion.style.animationPlayState = 'paused';
+
+            setTimeout(() => {
+                const current = getComputedStyle(item).transform;
+                const from = (current === 'none') ? 'translate(0px, 0px)' : current;
+
+                item.style.animation = 'none';
+
+                const d = fleeDirs[idx % 4];
+                const to = `translate(${d.x * window.innerWidth * 1.2}px, ${d.y * window.innerHeight * 0.7}px) scale(0.6) rotate(${d.rot}deg)`;
+
+                item.animate(
+                    [
+                        { transform: from, opacity: 1 },
+                        { transform: to, opacity: 0 }
+                    ],
+                    { duration: 2100, easing: 'ease-in', fill: 'forwards' }
+                );
+            }, 500);
+        }
+
+        /* 個別にサヨナラ：表示中の猫IDを指定し、途中で追加があっても別の猫を消さない */
+        window.removeCat = function(index) {
+            if (index < 0 || index >= comments.length) return;
+            removeCatById(String(comments[index].id ?? `legacy-${index}`));
+        };
+
+        function removeCatById(id) {
+            if (!isAdminCodeValid()) { alert('管理コードが違います。'); return; }
+            if (isAnimating) return;
+            const idx = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === id);
+            if (idx < 0) { updateCatManageList(); return; }
+            const catEl = Array.from(document.querySelectorAll('.cat-item')).find(el => el.dataset.catKey === id);
+            if (!catEl) { comments.splice(idx, 1); renderComments(); saveToServer(); return; }
+
+            isAnimating = true;
+            modal.classList.add('hidden');
+            fleeCat(catEl, idx);
+            setTimeout(() => {
+                const currentIndex = comments.findIndex((c, i) => String(c.id ?? `legacy-${i}`) === id);
+                if (currentIndex >= 0) comments.splice(currentIndex, 1);
+                isAnimating = false;
+                renderComments();
+                updateCatManageList();
+                saveToServer();
+                modal.classList.remove('hidden');
+            }, 2600);
+        }
+
+        document.getElementById('btnSaveCatAddition').addEventListener('click', async () => {
+            const code = modalCodeInput.value.trim();
+            if (!/^\d{4}$/.test(code)) {
+                alert('4桁の管理コードを入力してください。');
+                return;
+            }
+            const disabled = document.getElementById('disableCatAddition').checked;
+            try {
+                const res = await fetch('/api/room_action', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room: currentRoom, action: 'change_cat_addition', code, disabled })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') throw new Error(data.message || '設定を変更できませんでした');
+                roomConfig.cat_addition_disabled = !!data.cat_addition_disabled;
+                updateCatAdditionUI();
+                showToast(roomConfig.cat_addition_disabled ? '訪問者の猫追加を禁止しました' : '猫の追加禁止を解除しました');
+            } catch (err) { alert(err.message || '通信に失敗しました'); }
+        });
+
+        document.getElementById('btnSaveCatLimit').addEventListener('click', async () => {
+            const code = modalCodeInput.value;
+            const newLimit = parseInt(document.getElementById('modalCatLimit').value, 10);
+
+            const res = await fetch('/api/room_action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    room: currentRoom,
+                    action: 'change_max_cats',
+                    code,
+                    max_cats: newLimit
+                })
+            });
+
+            const data = await res.json();
+
+            if (data.status === 'ok') {
+                roomConfig.max_cats = newLimit;
+                alert(`猫の上限数を ${newLimit >= 999 ? '無制限' : newLimit + '匹'} に変更しました！`);
+            } else {
+                alert(data.message);
+            }
+        });
+
+        document.getElementById('btnChangeName').addEventListener('click', async () => {
+            const code = modalCodeInput.value.trim();
+            const new_name = document.getElementById('modalNewName').value.trim() || '猫の散歩道';
+            if (new_name.length > 20) { alert('お部屋の名前は20文字以内にしてください。'); return; }
+            try {
+                const res = await fetch('/api/room_action', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room: currentRoom, action: 'change_name', code, new_name })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') throw new Error(data.message || '名前を変更できませんでした');
+                document.getElementById('headerTitle').textContent = `🐾 ${new_name}`;
+                document.getElementById('modalNewName').value = '';
+                modal.classList.add('hidden');
+                showToast('お部屋の名前を変更しました');
+            } catch (err) { alert(err.message || '通信に失敗しました'); }
+        });
+
+        document.getElementById('btnChangeTheme').addEventListener('click', async () => {
+            const code = modalCodeInput.value;
+            const new_theme = document.getElementById('modalNewTheme').value.trim();
+
+            const res = await fetch('/api/room_action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    room: currentRoom,
+                    action: 'change_theme',
+                    code,
+                    new_theme
+                })
+            });
+
+            const data = await res.json();
+
+            if (data.status === 'ok') {
+                document.getElementById('cloudThemeText').textContent = `💡 ${new_theme}`;
+                modal.classList.add('hidden');
+                alert("テーマを変更しました！");
+            } else {
+                alert(data.message);
+            }
+        });
+
+        document.getElementById('btnClearCats').addEventListener('click', async () => {
+            const code = modalCodeInput.value.trim();
+            if (!isAdminCodeValid()) { alert('正しい管理コードを入力してください。'); return; }
+            if (isClearingCats) return;
+            if (!confirm('部屋にいる猫をすべて解散しますか？')) return;
+
+            isClearingCats = true;
+            try {
+                await saveQueue;
+                const oldCats = Array.from(document.querySelectorAll('.cat-item')).map((el, idx) => {
+                    const rect = el.getBoundingClientRect();
+                    const ghost = el.cloneNode(true);
+                    ghost.classList.add('clear-cat-ghost');
+                    ghost.style.position = 'fixed';
+                    ghost.style.left = rect.left + 'px';
+                    ghost.style.top = rect.top + 'px';
+                    ghost.style.width = rect.width + 'px';
+                    ghost.style.height = rect.height + 'px';
+                    ghost.style.margin = '0';
+                    ghost.style.pointerEvents = 'none';
+                    ghost.style.zIndex = '2000';
+                    // 個別のサヨナラと同じ💦エフェクトを付ける。
+                    const sweat = document.createElement('div');
+                    sweat.className = 'sweat-mark';
+                    sweat.textContent = '💦';
+                    const ghostBody = ghost.querySelector('.cat-body-wrap');
+                    (ghostBody || ghost).appendChild(sweat);
+                    document.body.appendChild(ghost);
+                    return ghost;
+                });
+
+                const res = await fetch('/api/room_action', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room: currentRoom, action: 'clear_cats', code })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'ok') throw new Error(data.message || '猫を解散できませんでした');
+
+                if (Number.isFinite(Number(data.clear_version))) roomClearVersion = Number(data.clear_version);
+                isClearingCats = false;
+                comments = [];
+                lastServerSnapshot = '[]';
+                renderComments();
+                updateCatManageList();
+                modal.classList.add('hidden');
+
+                oldCats.forEach((ghost, idx) => {
+                    const d = fleeDirs[idx % fleeDirs.length];
+                    // 個別のサヨナラと同様、💦が出てから少し間を置いて逃げる。
+                    setTimeout(() => {
+                        if (!ghost.isConnected) return;
+                        ghost.animate([
+                            { transform: 'translate(0,0) scale(1) rotate(0deg)', opacity: 1 },
+                            { transform: `translate(${d.x * window.innerWidth * 1.2}px, ${d.y * window.innerHeight * 0.7}px) scale(.6) rotate(${d.rot}deg)`, opacity: 0 }
+                        ], { duration: 2100, easing: 'ease-in', fill: 'forwards' }).onfinish = () => ghost.remove();
+                    }, 500);
+                });
+                showToast('猫たちがみんな帰りました 🐾');
+                // 解散直後から新しい猫を追加できるようにする。
+            } catch (err) {
+                isClearingCats = false;
+                document.querySelectorAll('.clear-cat-ghost').forEach(el => el.remove());
+                alert(err.message || '通信に失敗しました。もう一度試してください。');
+            }
+        });
+
+        document.getElementById('btnDeleteRoom').addEventListener('click', async () => {
+            if (!confirm("本当にこの部屋を解散しますか？")) return;
+
+            const code = modalCodeInput.value;
+
+            const res = await fetch('/api/room_action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    room: currentRoom,
+                    action: 'delete',
+                    code
+                })
+            });
+
+            const data = await res.json();
+
+            if (data.status === 'ok') {
+                alert("部屋を解散しました。");
+                window.location.href = '/';
+            } else {
+                alert(data.message);
+            }
+        });
+
+        // 部屋専用URLの共有（コピー／QRコード）
+        function getRoomShareUrl() {
+            return window.location.origin + window.location.pathname + '?room=' + encodeURIComponent(currentRoom || '');
+        }
+
+        function updateRoomShareUrl() {
+            const url = getRoomShareUrl();
+            const display = document.getElementById('shareRoomUrl');
+            if (display) display.textContent = url;
+            return url;
+        }
+
+        document.getElementById('btnCopyRoomUrl').addEventListener('click', async () => {
+            const url = updateRoomShareUrl();
+            const status = document.getElementById('shareStatus');
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(url);
+                } else {
+                    const temp = document.createElement('textarea');
+                    temp.value = url;
+                    temp.style.position = 'fixed';
+                    temp.style.opacity = '0';
+                    document.body.appendChild(temp);
+                    temp.select();
+                    const copied = document.execCommand('copy');
+                    temp.remove();
+                    if (!copied) throw new Error('copy failed');
+                }
+                status.textContent = 'URLをコピーしました！友達に送ってね 🐾';
+            } catch (_) {
+                status.textContent = 'コピーできませんでした。URLを選択してコピーしてください。';
+            }
+        });
+
+        const roomQrModal = document.getElementById('roomQrModal');
+        document.getElementById('btnShowRoomQr').addEventListener('click', () => {
+            const url = updateRoomShareUrl();
+            document.getElementById('roomQrUrl').textContent = url;
+            // QR画像は外部QR生成サービスで作成。部屋URL以外の情報は送信しない。
+            document.getElementById('roomQrImage').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=10&data=' + encodeURIComponent(url);
+            roomQrModal.classList.remove('hidden');
+        });
+        document.getElementById('btnCloseRoomQr').addEventListener('click', () => {
+            roomQrModal.classList.add('hidden');
+        });
+        roomQrModal.addEventListener('click', (e) => {
+            if (e.target === roomQrModal) roomQrModal.classList.add('hidden');
+        });
+
+        function escapeHTML(str) {
+            return String(str).replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            }[tag] || tag));
+        }
+
+        async function refreshRoomTitle() {
+            if (!currentRoom) return;
+            try {
+                const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
+                if (!res.ok) return;
+                const info = await res.json();
+                if (!info.exists) return;
+                const displayName = (!info.name || info.name === 'もふもふ広場' || info.name === '猫の散歩道')
+                    ? '猫の散歩道' : info.name;
+                document.getElementById('headerTitle').textContent = `🐾 ${displayName}`;
+            } catch (_) {}
+        }
+
+        async function init() {
+            if (currentRoom) {
+                const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
+                const info = await res.json();
+
+                if (!info.exists) {
+                    alert("指定された部屋が存在しないか、48時間が経過して自動解散されました。");
+                    window.location.href = '/';
+                    return;
+                }
+
+                document.getElementById('lobby').classList.add('hidden');
+                document.getElementById('roomView').classList.remove('hidden');
+                document.getElementById('settingsBtn').classList.remove('hidden');
+                document.getElementById('roomShareBtn').classList.remove('hidden');
+
+                // 未指定時の旧デフォルト名はサイト名として表示する。新しく名前を付けた部屋は部屋名を表示。
+                const displayName = (!info.name || info.name === 'もふもふ広場' || info.name === '猫の散歩道')
+                    ? '猫の散歩道' : info.name;
+                document.getElementById('headerTitle').textContent = `🐾 ${displayName}`;
+                updateRoomShareUrl();
+                document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
+
+                applyColorTheme(info.color);
+
+                roomConfig.max_cats = info.max_cats ?? 20;
+                roomConfig.fish_limit = info.fish_limit || 3;
+                roomConfig.cat_addition_disabled = !!info.cat_addition_disabled;
+                updateCatAdditionUI();
+
+                updateFishBadgeDisplay();
+
+                await fetchComments();
+                setInterval(fetchComments, 1200);
+                // 他の参加者が部屋名を変更した場合も、しばらくするとヘッダーへ反映。
+                setInterval(refreshRoomTitle, 15000);
+            }
+        }
+
+        // スマホの回転やPC/スマホ間の画面サイズ変更時に、猫を相対位置で再配置する。
+        let resizeRenderTimer = null;
+        window.addEventListener('resize', () => {
+            if (resizeRenderTimer) clearTimeout(resizeRenderTimer);
+            resizeRenderTimer = setTimeout(() => {
+                if (!dragState && currentRoom) renderComments();
+            }, 120);
+        });
+
+        window.addEventListener('load', () => {
+            initTopCatGarden();
+            init();
+        });
+    </script>
+</body>
+</html>
