@@ -2242,7 +2242,7 @@
             const root = document.documentElement;
             if (!root.classList.contains('top-wait')) return;
             const release = () => root.classList.remove('top-wait');
-            const timeout = new Promise(resolve => setTimeout(resolve, 2500));
+            const timeout = new Promise(resolve => setTimeout(resolve, 800));
             Promise.race([Promise.all(topNormalPromises), timeout]).then(release, release);
         }
 
