@@ -179,7 +179,11 @@ def index():
 @app.route('/neko_icon/<path:filename>')
 def serve_neko_icon(filename):
     icon_dir = os.path.join(BASE_DIR, 'neko_icon')
-    return send_from_directory(icon_dir, filename)
+    # 猫画像は7日間ブラウザに保存。期間中はサーバーに確認せず、すぐ表示される
+    return send_from_directory(icon_dir, filename, max_age=60 * 60 * 24 * 7)
+
+
+
 
 
 # ==========================================
