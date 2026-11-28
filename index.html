@@ -753,35 +753,36 @@
             'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
         ];
 
-        // 猫画像を先読みして、表示時に画像が後から描き足されるのを防ぐ。
-        // まず通常画像を優先し、読み込み完了後にhappy画像をバックグラウンドで読む。
+        // 画像キャッシュ。初期表示では全種類を先読みしない。
         const catImageCache = new Map();
-        function preloadCatImages() {
-            const loadImage = (url, priority) => new Promise(resolve => {
-                if (catImageCache.has(url)) return resolve(catImageCache.get(url));
+        let topCatTypesForPreload = [];
+        function preloadTopHappyImages() {
+            // TOPに実際に表示している猫の「ニコニコ」だけを低優先度で先読み。
+            // 通常画像は表示中のimgが直接読み込むため、重複先読みしない。
+            const uniqueTypes = [...new Set(topCatTypesForPreload)];
+            uniqueTypes.forEach(type => {
+                const url = `/neko_icon/cat_${type}_happy.png`;
+                if (catImageCache.has(url)) return;
                 const img = new Image();
                 catImageCache.set(url, img);
-                try { img.fetchPriority = priority; } catch (_) {}
-                img.onload = img.onerror = () => resolve(img);
+                try { img.fetchPriority = 'low'; } catch (_) {}
+                img.decoding = 'async';
+                img.onload = img.onerror = () => {};
                 img.src = url;
-                if (img.complete) resolve(img);
             });
-            const normalImages = catTypes.map(type => `/neko_icon/cat_${type}_normal.png`);
-            const happyImages = catTypes.map(type => `/neko_icon/cat_${type}_happy.png`);
-            Promise.all(normalImages.map(url => loadImage(url, 'high')))
-                .then(() => Promise.all(happyImages.map(url => loadImage(url, 'low'))));
         }
-        // 大量の猫画像の先読みは初期表示を妨げないよう、画面表示後に遅らせる。
-        // TOP/部屋の猫が先に表示され、余裕ができてから画像キャッシュを温める。
+        // 初期画面の描画・操作を優先し、数秒後のアイドル時間に3種類だけ先読み。
         function scheduleCatImagePreload() {
-            const run = () => {
-                if ('requestIdleCallback' in window) {
-                    window.requestIdleCallback(() => preloadCatImages(), { timeout: 2500 });
-                } else {
-                    setTimeout(() => preloadCatImages(), 1500);
-                }
-            };
-            setTimeout(run, 900);
+            setTimeout(() => {
+                const run = () => {
+                    if ('requestIdleCallback' in window) {
+                        window.requestIdleCallback(preloadTopHappyImages, { timeout: 6000 });
+                    } else {
+                        setTimeout(preloadTopHappyImages, 3500);
+                    }
+                };
+                run();
+            }, 4000);
         }
 
         // TOPの猫は3匹固定。50匹サイズ・同じ高さ・等間隔で、ノーマル/ニコニコのみ。
@@ -808,6 +809,7 @@
             );
             const pickType = () => weightedTypes[Math.floor(Math.random() * weightedTypes.length)];
             const types = Array.from({ length: 3 }, pickType);
+            topCatTypesForPreload = types.slice();
             const spread = size * 1.5;
             const rangeLeft = Math.max(6, lobbyRect.left - spread);
             const rangeRight = Math.min(viewportW - size - 6, lobbyRect.right + spread - size);
