@@ -26,6 +26,18 @@
             --border-color: #f59e0b;
         }
 
+        /* 共有URLで色設定を取得する間は、黄色を見せず落ち着いた中立色で表示 */
+        body.theme-pending {
+            --bg-start: #f8fafc;
+            --bg-end: #f1f5f9;
+            --header-bg: linear-gradient(135deg, #64748b, #94a3b8);
+            --header-cat: #475569;
+            --button-cat: #64748b;
+            --button-hover: #475569;
+            --text-color: #334155;
+            --border-color: #94a3b8;
+        }
+
         body.theme-mint {
             --bg-start: #d1fae5;
             --bg-end: #ecfdf5;
@@ -738,7 +750,18 @@
             Promise.all(normalImages.map(url => loadImage(url, 'high')))
                 .then(() => Promise.all(happyImages.map(url => loadImage(url, 'low'))));
         }
-        preloadCatImages();
+        // 大量の猫画像の先読みは初期表示を妨げないよう、画面表示後に遅らせる。
+        // TOP/部屋の猫が先に表示され、余裕ができてから画像キャッシュを温める。
+        function scheduleCatImagePreload() {
+            const run = () => {
+                if ('requestIdleCallback' in window) {
+                    window.requestIdleCallback(() => preloadCatImages(), { timeout: 2500 });
+                } else {
+                    setTimeout(() => preloadCatImages(), 1500);
+                }
+            };
+            setTimeout(run, 900);
+        }
 
         // TOP下部の猫はランダムな種類・順番で並び、表情も不定期に変わる。
         function initTopCatGarden() {
@@ -1042,6 +1065,11 @@
             const data = await res.json();
 
             if (data.status === 'ok') {
+                // 作成時に選んだ色を遷移先で先に適用し、デフォルト色のちらつきを防ぐ。
+                try {
+                    sessionStorage.setItem(`neko_room_color_${data.room_id}`, color);
+                    sessionStorage.setItem(`neko_room_theme_${data.room_id}`, theme);
+                } catch (_) {}
                 window.location.href = '?room=' + encodeURIComponent(data.room_id);
             } else {
                 alert(data.message || "作成に失敗しました。");
@@ -2104,8 +2132,35 @@
         }
 
         async function init() {
-            if (currentRoom) {
+            if (!currentRoom) return;
+
+            // 先に部屋の骨組みを表示。API応答を待ってから画面を切り替えない。
+            document.getElementById('lobby').classList.add('hidden');
+            document.getElementById('roomView').classList.remove('hidden');
+            document.getElementById('settingsBtn').classList.remove('hidden');
+            document.getElementById('roomShareBtn').classList.remove('hidden');
+            document.getElementById('headerTitle').textContent = '🐾 猫の散歩道';
+            updateRoomShareUrl();
+
+            // 新規作成直後は、作成画面で保存した色を初回描画から適用。
+            // 共有URLから初めて開いた場合は、サーバー設定取得後に適用する。
+            let cachedColor = null;
+            let cachedTheme = null;
+            try {
+                cachedColor = sessionStorage.getItem(`neko_room_color_${currentRoom}`);
+                cachedTheme = sessionStorage.getItem(`neko_room_theme_${currentRoom}`);
+            } catch (_) {}
+            if (cachedColor) applyColorTheme(cachedColor);
+            else document.body.classList.add('theme-pending');
+            if (cachedTheme) document.getElementById('cloudThemeText').textContent = `💡 ${cachedTheme}`;
+
+            // 猫データ取得も部屋情報と並行して開始。部屋情報APIの応答を待たず猫を描画する。
+            const commentsPromise = fetchComments();
+
+            // 部屋情報・設定の取得は、画面表示後に非同期で進める。
+            try {
                 const res = await fetch(`/api/room_info?room=${encodeURIComponent(currentRoom)}`);
+                if (!res.ok) throw new Error('room info fetch failed');
                 const info = await res.json();
 
                 if (!info.exists) {
@@ -2114,31 +2169,25 @@
                     return;
                 }
 
-                document.getElementById('lobby').classList.add('hidden');
-                document.getElementById('roomView').classList.remove('hidden');
-                document.getElementById('settingsBtn').classList.remove('hidden');
-                document.getElementById('roomShareBtn').classList.remove('hidden');
-
-                // 未指定時の旧デフォルト名はサイト名として表示する。新しく名前を付けた部屋は部屋名を表示。
                 const displayName = (!info.name || info.name === 'もふもふ広場' || info.name === '猫の散歩道')
                     ? '猫の散歩道' : info.name;
                 document.getElementById('headerTitle').textContent = `🐾 ${displayName}`;
-                updateRoomShareUrl();
                 document.getElementById('cloudThemeText').textContent = `💡 ${info.theme}`;
 
-                applyColorTheme(info.color);
+                // キャッシュ色と一致していれば再適用しない。色のちらつきを抑える。
+                if (!cachedColor || cachedColor !== info.color) applyColorTheme(info.color);
 
                 roomConfig.max_cats = info.max_cats ?? 20;
                 roomConfig.fish_limit = info.fish_limit || 3;
                 roomConfig.cat_addition_disabled = !!info.cat_addition_disabled;
                 updateCatAdditionUI();
-
                 updateFishBadgeDisplay();
 
-                await fetchComments();
+                await commentsPromise;
                 setInterval(fetchComments, 1200);
-                // 他の参加者が部屋名を変更した場合も、しばらくするとヘッダーへ反映。
                 setInterval(refreshRoomTitle, 15000);
+            } catch (err) {
+                console.warn('部屋情報の読み込みに失敗しました。画面表示は維持します。', err);
             }
         }
 
@@ -2151,9 +2200,11 @@
             }, 120);
         });
 
-        window.addEventListener('load', () => {
+        document.addEventListener('DOMContentLoaded', () => {
+            // DOMができた時点でまず画面と猫を描画。画像のload完了は待たない。
             initTopCatGarden();
             init();
+            scheduleCatImagePreload();
         });
     </script>
 </body>
