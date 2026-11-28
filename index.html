@@ -7,6 +7,13 @@
             try {
                 if (new URLSearchParams(location.search).has('room')) {
                     document.documentElement.classList.add('room-link');
+                } else {
+                    // TOPは猫3匹の画像が読み込めるまで、中身を隠して「ぱっ」と出す
+                    document.documentElement.classList.add('top-wait');
+                    // 何かあっても表示されなくならないよう、最大3.5秒で必ず解除
+                    setTimeout(function () {
+                        document.documentElement.classList.remove('top-wait');
+                    }, 3500);
                 }
             } catch (_) {}
         })();
@@ -127,6 +134,8 @@
         }
 
         .hidden { display: none !important; }
+        /* TOPの猫が読み込めるまで中身だけ隠す（背景色は表示したまま） */
+        html.top-wait body > * { visibility: hidden !important; }
         html.room-link #lobby { display: none !important; }
         html.room-link #roomView.hidden { display: block !important; visibility: hidden; }
         html.room-link #roomView:not(.hidden) { visibility: visible; }
@@ -870,7 +879,11 @@
                 // 通常顔の読み込み完了（失敗時も含む）を記録。完了後に残りの先読みを始める。
                 topNormalPromises.push(new Promise(resolve => {
                     const done = () => resolve();
-                    img.addEventListener('load', done, { once: true });
+                    // 読み込み後にデコードまで済ませておくと、表示した瞬間に猫が出る
+                    img.addEventListener('load', () => {
+                        if (img.decode) img.decode().then(done, done);
+                        else done();
+                    }, { once: true });
                     img.addEventListener('error', done, { once: true });
                 }));
                 setFace('normal');
@@ -2178,8 +2191,10 @@
                 };
                 const expandedFrom = el => {
                     const cs = getComputedStyle(el);
+                    // content-box の高さ（余白・枠線を含まない値）を使う。
+                    // offsetHeight を使うと余白ぶん最終高さがずれ、終わりにカクッとなる。
                     return {
-                        height: el.offsetHeight + 'px', opacity: 1,
+                        height: cs.height, opacity: 1,
                         paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
                         borderTopWidth: cs.borderTopWidth
                     };
@@ -2221,10 +2236,20 @@
             });
         }
 
+        // TOP：猫3匹の通常顔が読み込めたら（キャッシュ済みなら一瞬で）ページをぱっと表示。
+        // 回線が遅くても、最大2.5秒でそのまま表示する。
+        function revealTopWhenReady() {
+            const root = document.documentElement;
+            if (!root.classList.contains('top-wait')) return;
+            const release = () => root.classList.remove('top-wait');
+            const timeout = new Promise(resolve => setTimeout(resolve, 2500));
+            Promise.race([Promise.all(topNormalPromises), timeout]).then(release, release);
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             setupSmoothDetails();
-            // DOMができた時点でまず画面と猫を描画。画像のload完了は待たない。
             initTopCatGarden();
+            revealTopWhenReady();
             init();
             scheduleCatImagePreload();
         });
