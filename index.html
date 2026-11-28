@@ -798,7 +798,16 @@
             const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
             const safeTop = Math.max(headerBottom + 8, 8);
             const size = 45 * getCatGrowthScale(50);
-            const types = ['white', 'black', 'orange_tabby'];
+            // 6種類は同じ確率、longhairだけ出現率を半分にする
+            const typeWeights = [
+                ['cream', 1], ['kiji_tabby', 1], ['orange_tabby', 1],
+                ['saba_tabby', 1], ['tuxedo', 1], ['white', 1], ['longhair', 0.5]
+            ];
+            const weightedTypes = typeWeights.flatMap(([type, weight]) =>
+                Array.from({ length: weight === 0.5 ? 1 : 2 }, () => type)
+            );
+            const pickType = () => weightedTypes[Math.floor(Math.random() * weightedTypes.length)];
+            const types = Array.from({ length: 3 }, pickType);
             const spread = size * 1.5;
             const rangeLeft = Math.max(6, lobbyRect.left - spread);
             const rangeRight = Math.min(viewportW - size - 6, lobbyRect.right + spread - size);
@@ -809,7 +818,9 @@
             const supportRect = supportBox ? supportBox.getBoundingClientRect() : null;
             const maxY = Math.min(viewportH - size - 8,
                 supportRect ? supportRect.top - size - 8 : viewportH - size - 8);
-            const y = Math.max(safeTop, Math.min(maxY, lobbyRect.bottom + 8));
+            // 白いメニュー枠の下から約32px（従来の8px間隔の約4倍）
+            const menuCatGap = 32;
+            const y = Math.max(safeTop, Math.min(maxY, lobbyRect.bottom + menuCatGap));
 
             const cats = types.map((type, i) => ({ type, left: xPositions[i], top: y, size }));
             cats.forEach(cat => {
@@ -822,7 +833,7 @@
                 wrap.style.top = `${cat.top}px`;
                 wrap.style.setProperty('--top-cat-size', `${cat.size}px`);
                 wrap.style.setProperty('--float-duration', '4.8s');
-                wrap.style.animation = 'none';
+                // 広場の猫と同じように、ゆっくり上下にふわふわさせる
                 wrap.style.setProperty('--float-delay', `${-0.6 * cats.indexOf(cat)}s`);
                 wrap.style.setProperty('--tilt', '0deg');
 
