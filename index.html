@@ -753,36 +753,62 @@
             'orange_tabby', 'saba_tabby', 'tuxedo', 'white'
         ];
 
-        // 画像キャッシュ。初期表示では全種類を先読みしない。
+        // 画像キャッシュ（段階的に先読みする）
+        //  段階1: TOPの猫3匹の「通常顔」を最優先(high)で即読み込み（表示用imgが直接担当）
+        //  段階2: 3匹の通常顔が表示できたあと、ページのload完了＋アイドル時に低優先度で
+        //         ① 表示中3匹のニコニコ顔 ② 残りの通常顔 ③ 残りのニコニコ顔 の順に先読み
         const catImageCache = new Map();
         let topCatTypesForPreload = [];
-        function preloadTopHappyImages() {
-            // TOPに実際に表示している猫の「ニコニコ」だけを低優先度で先読み。
-            // 通常画像は表示中のimgが直接読み込むため、重複先読みしない。
-            const uniqueTypes = [...new Set(topCatTypesForPreload)];
-            uniqueTypes.forEach(type => {
-                const url = `/neko_icon/cat_${type}_happy.png`;
-                if (catImageCache.has(url)) return;
+        const topNormalPromises = []; // TOPの猫3匹の通常顔が読み込み終わったか
+
+        function preloadOneImage(url) {
+            return new Promise(resolve => {
+                if (catImageCache.has(url)) return resolve();
                 const img = new Image();
                 catImageCache.set(url, img);
                 try { img.fetchPriority = 'low'; } catch (_) {}
                 img.decoding = 'async';
-                img.onload = img.onerror = () => {};
+                img.onload = img.onerror = () => resolve();
                 img.src = url;
             });
         }
-        // 初期画面の描画・操作を優先し、数秒後のアイドル時間に3種類だけ先読み。
+
+        // 同時に読み込むのは3枚まで。表示や操作の邪魔をしないようにする。
+        async function preloadQueue(urls, concurrency = 3) {
+            const queue = urls.slice();
+            const worker = async () => {
+                while (queue.length) await preloadOneImage(queue.shift());
+            };
+            await Promise.all(Array.from({ length: concurrency }, worker));
+        }
+
+        function runCatImagePreload() {
+            const url = (type, face) => `/neko_icon/cat_${type}_${face}.png`;
+            const topTypes = [...new Set(topCatTypesForPreload)];
+            const otherTypes = catTypes.filter(t => !topTypes.includes(t));
+            const urls = [
+                ...topTypes.map(t => url(t, 'happy')),     // ① 表示中の猫のニコニコ顔
+                ...topTypes.map(t => url(t, 'normal')),    // （部屋URLのときはここは空）
+                ...otherTypes.map(t => url(t, 'normal')),  // ② 残りの通常顔
+                ...otherTypes.map(t => url(t, 'happy'))    // ③ 残りのニコニコ顔
+            ];
+            preloadQueue(urls);
+        }
+
         function scheduleCatImagePreload() {
-            setTimeout(() => {
-                const run = () => {
-                    if ('requestIdleCallback' in window) {
-                        window.requestIdleCallback(preloadTopHappyImages, { timeout: 6000 });
-                    } else {
-                        setTimeout(preloadTopHappyImages, 3500);
-                    }
-                };
-                run();
-            }, 4000);
+            const afterLoad = new Promise(resolve => {
+                if (document.readyState === 'complete') resolve();
+                else window.addEventListener('load', resolve, { once: true });
+            });
+            // 通常顔の表示完了 → ページのload完了 → ブラウザがひま → 先読み開始
+            Promise.all([Promise.all(topNormalPromises), afterLoad]).then(() => {
+                const start = () => runCatImagePreload();
+                if ('requestIdleCallback' in window) {
+                    window.requestIdleCallback(start, { timeout: 2000 });
+                } else {
+                    setTimeout(start, 300);
+                }
+            });
         }
 
         // TOPの猫は3匹固定。50匹サイズ・同じ高さ・等間隔で、ノーマル/ニコニコのみ。
@@ -842,6 +868,10 @@
                 const img = document.createElement('img');
                 img.alt = '';
                 img.draggable = false;
+                // TOPの猫の通常顔は最優先で読み込み、表示を最速にする
+                try { img.fetchPriority = 'high'; } catch (_) {}
+                img.decoding = 'async';
+                img.setAttribute('fetchpriority', 'high');
                 wrap.appendChild(img);
                 garden.appendChild(wrap);
 
@@ -858,6 +888,12 @@
                     };
                     img.src = `/neko_icon/cat_${cat.type}_${face}.png`;
                 };
+                // 通常顔の読み込み完了（失敗時も含む）を記録。完了後に残りの先読みを始める。
+                topNormalPromises.push(new Promise(resolve => {
+                    const done = () => resolve();
+                    img.addEventListener('load', done, { once: true });
+                    img.addEventListener('error', done, { once: true });
+                }));
                 setFace('normal');
                 const feedTopCat = (x, y) => {
                     clearTimeout(faceTimer);
