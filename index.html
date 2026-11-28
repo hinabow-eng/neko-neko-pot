@@ -140,14 +140,27 @@
         .admin-section > summary::after { content: '＋'; float: right; color: #94a3b8; }
         .admin-section[open] > summary::after { content: '－'; }
         .admin-section-content { padding: 10px; border-top: 1px solid #e2e8f0; }
-        /* 設定項目は上端を固定し、下方向だけに開く */
-        .admin-section[open] > .admin-section-content {
-            transform-origin: top center;
-            animation: adminSectionOpen .28s cubic-bezier(.2,.75,.25,1) both;
+        /* 設定項目を「にゅーん」と上下に伸縮させる */
+        @supports selector(details::details-content) {
+            .admin-section::details-content {
+                block-size: 0;
+                interpolate-size: allow-keywords;
+                overflow: clip;
+                transition: block-size .38s cubic-bezier(.2,.75,.25,1),
+                            content-visibility .38s allow-discrete;
+            }
+            .admin-section[open]::details-content { block-size: auto; }
         }
-        @keyframes adminSectionOpen {
-            from { opacity: 0; transform: translateY(0) scaleY(.96); }
-            to   { opacity: 1; transform: translateY(0) scaleY(1); }
+        /* 非対応ブラウザでは中身をやわらかく表示 */
+        @supports not selector(details::details-content) {
+            .admin-section[open] > .admin-section-content {
+                transform-origin: top center;
+                animation: adminSectionOpen .38s cubic-bezier(.2,.75,.25,1) both;
+            }
+            @keyframes adminSectionOpen {
+                from { opacity: 0; transform: translateY(-5px) scaleY(.94); }
+                to   { opacity: 1; transform: translateY(0) scaleY(1); }
+            }
         }
         .theme-edit-row { display: flex; align-items: center; gap: 7px; }
         .theme-edit-row input { flex: 1; min-width: 0; margin: 8px 0 !important; }
@@ -234,6 +247,14 @@
             outline: none; font-size: 16px; box-sizing: border-box;
         }
         .form-group input:focus { border-color: var(--button-cat); }
+        /* スマホでもテーマカラーの選択欄を通常の有効状態で表示 */
+        #inColor {
+            display: block; opacity: 1 !important; filter: none !important;
+            color: #334155 !important; background-color: #fff !important;
+            -webkit-appearance: menulist; appearance: auto;
+            pointer-events: auto !important; touch-action: manipulation;
+        }
+        #inColor:disabled { opacity: 1 !important; color: #334155 !important; }
 
         #createRoomBtn {
             width: 100%; background-color: var(--button-cat); color: white; border: none;
@@ -549,7 +570,7 @@
     </header>
 
     <div id="lobby">
-        <h2>🐾 新しいお部屋をつくろう</h2>
+        <h2>🐾 新しい広場をつくろう</h2>
         <div class="form-group">
             <label>お話のテーマ</label>
             <input type="text" id="inTheme" placeholder="空欄ならランダムテーマ" maxlength="30">
@@ -573,7 +594,7 @@
         <select id="inFishLimit" class="hidden" aria-hidden="true" tabindex="-1">
             <option value="999" selected>無制限</option>
         </select>
-        <button id="createRoomBtn">お部屋を作る 🐾</button>
+        <button id="createRoomBtn">広場をつくる 🐾</button>
     </div>
 
     <!-- TOPをにぎやかにする、ふわふわ猫の広場 -->
@@ -611,7 +632,7 @@
 
     <div id="settingsModal" class="modal hidden">
         <div class="modal-content">
-            <h3>⚙️ 部屋の設定</h3>
+            <h3>⚙️ 広場の設定</h3>
 
             <p style="font-size:0.8rem; color:#666;">部屋の管理操作には4桁の管理コードが必要です</p>
             <input type="text" id="modalCode" class="code-input" placeholder="管理コード（4桁）" maxlength="4" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
@@ -619,9 +640,9 @@
             <div id="adminCodeStatus">管理コードを入力すると、下の設定を操作できます。</div>
             <div id="adminControls" class="admin-controls locked" aria-disabled="true">
                 <details class="admin-section">
-                    <summary>🏠 お部屋の名前を変更</summary>
+                    <summary>🏠 広場の名前を変更</summary>
                     <div class="admin-section-content">
-                        <label style="font-size:0.8rem; font-weight:bold; display:block; text-align:left;">新しいお部屋の名前（20文字まで）</label>
+                        <label style="font-size:0.8rem; font-weight:bold; display:block; text-align:left;">新しい広場の名前（20文字まで）</label>
                         <div class="theme-edit-row">
                             <input type="text" id="modalNewName" placeholder="猫の散歩道" maxlength="20">
                             <button id="btnChangeName" type="button">変更</button>
@@ -667,7 +688,7 @@
                     <div class="admin-section-content">
                         <div class="modal-btn-group quiet-action-buttons" style="margin-top:8px;">
                             <button id="btnClearCats">🐾 猫を解散（ぜんぶ逃がす）</button>
-                            <button id="btnDeleteRoom">🏠 部屋を解散（TOPへ戻る）</button>
+                            <button id="btnDeleteRoom">🏠 広場を解散（TOPへ戻る）</button>
                         </div>
                     </div>
                 </details>
@@ -763,104 +784,35 @@
             setTimeout(run, 900);
         }
 
-        // TOP下部の猫はランダムな種類・順番で並び、表情も不定期に変わる。
+        // TOPの猫は3匹固定。50匹サイズ・同じ高さ・等間隔で、ノーマル/ニコニコのみ。
         function initTopCatGarden() {
             const garden = document.getElementById('topCatGarden');
             const lobby = document.getElementById('lobby');
             if (!garden || !lobby || currentRoom) return;
-
             garden.replaceChildren();
+
             const viewportW = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
             const viewportH = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
             const lobbyRect = lobby.getBoundingClientRect();
             const header = document.querySelector('header');
             const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
             const safeTop = Math.max(headerBottom + 8, 8);
-            const safeBottom = Math.max(8, viewportH - 8);
-            const count = 3 + Math.floor(Math.random() * 5);
-            const sizeChoices = [
-                { fish: 5, scale: 1.15 },
-                { fish: 10, scale: 1.30 },
-                { fish: 20, scale: 1.50 }
-            ];
-            const placed = [];
-            const cats = Array.from({ length: count }, (_, i) => ({
-                type: catTypes[Math.floor(Math.random() * catTypes.length)],
-                size: 45 * sizeChoices[Math.floor(Math.random() * sizeChoices.length)].scale,
-                fishSize: 0,
-                index: i,
-                delay: -Math.random() * 5,
-                duration: 3.8 + Math.random() * 3.8,
-                tilt: -4 + Math.random() * 8
-            }));
+            const size = 45 * getCatGrowthScale(50);
+            const types = ['white', 'black', 'orange_tabby'];
+            const spread = size * 1.5;
+            const rangeLeft = Math.max(6, lobbyRect.left - spread);
+            const rangeRight = Math.min(viewportW - size - 6, lobbyRect.right + spread - size);
+            const usableWidth = Math.max(0, rangeRight - rangeLeft);
+            const xPositions = [0, 0.5, 1].map(r => rangeLeft + usableWidth * r);
 
-            // 猫の矩形がロビーや既に置いた猫とぶつからない候補だけを採用。
-            const intersects = (a, b, gap = 8) =>
-                a.left < b.left + b.width + gap &&
-                a.left + a.width + gap > b.left &&
-                a.top < b.top + b.height + gap &&
-                a.top + a.height + gap > b.top;
-
-            function candidateIsClear(rect) {
-                const lobbyBox = {
-                    left: lobbyRect.left - 3, top: lobbyRect.top - 3,
-                    width: lobbyRect.width + 6, height: lobbyRect.height + 6
-                };
-                if (intersects(rect, lobbyBox, 0)) return false;
-                if (placed.some(p => intersects(rect, p, 8))) return false;
-                return true;
-            }
-
-            // 猫はTOPメニューの下側だけに配置。上側には出さない。
-            // 下の応援ボックスがある場合は、猫がその上に重ならないよう避ける。
             const supportBox = document.querySelector('.support-box');
             const supportRect = supportBox ? supportBox.getBoundingClientRect() : null;
-            cats.forEach((cat, i) => {
-                let chosen = null;
-                const size = cat.size;
-                const minY = Math.max(lobbyRect.bottom + 10, safeTop);
-                const maxY = Math.min(viewportH - size - 8,
-                    supportRect ? supportRect.top - size - 8 : viewportH - size - 8);
-                if (maxY < minY) return;
+            const maxY = Math.min(viewportH - size - 8,
+                supportRect ? supportRect.top - size - 8 : viewportH - size - 8);
+            const y = Math.max(safeTop, Math.min(maxY, lobbyRect.bottom + 8));
 
-                // 猫はメニューの横幅を中心に、左右へ猫2匹分ほどだけ広げる。
-                // 画面の端まで散らばらないよう、横方向の範囲を固定してジグザグ配置。
-                const maxCatSize = 45 * 1.50;
-                const spread = maxCatSize * 2; // メニュー左右それぞれ約2匹分
-                const rangeLeft = Math.max(5, lobbyRect.left - spread);
-                const rangeRight = Math.min(viewportW - size - 5, lobbyRect.right + spread - size);
-                const usableWidth = Math.max(0, rangeRight - rangeLeft);
-                const targetX = count <= 1 ? (rangeLeft + rangeRight) / 2 :
-                    rangeLeft + usableWidth * (i / (count - 1));
-                // 縦方向もメニュー直下の数段にまとめ、ゆるいジグザグにする。
-                const rowGap = Math.max(18, size * 0.72);
-                const row = i % 3;
-                const targetY = Math.min(maxY, minY + row * rowGap);
-                for (let attempt = 0; attempt < 420; attempt++) {
-                    let x = targetX + (Math.random() - 0.5) * Math.min(size * 0.65, 38);
-                    let y = targetY + (Math.random() - 0.5) * Math.min(size * 0.55, 30);
-                    x = Math.max(rangeLeft, Math.min(rangeRight, x));
-                    y = Math.max(minY, Math.min(maxY, y));
-                    const rect = { left: x, top: y, width: size, height: size };
-                    if (candidateIsClear(rect)) {
-                        if (supportRect && intersects(rect, {
-                            left: supportRect.left, top: supportRect.top,
-                            width: supportRect.width, height: supportRect.height
-                        }, 4)) continue;
-                        chosen = rect;
-                        break;
-                    }
-                }
-                // 画面が狭く全匹置けない場合は、重ねずに置ける猫だけ表示。
-                if (!chosen) return;
-                cat.left = chosen.left;
-                cat.top = chosen.top;
-                placed.push(chosen);
-            });
-
+            const cats = types.map((type, i) => ({ type, left: xPositions[i], top: y, size }));
             cats.forEach(cat => {
-                if (!Number.isFinite(cat.left) || !Number.isFinite(cat.top)) return;
-
                 const wrap = document.createElement('div');
                 wrap.className = 'top-garden-cat';
                 wrap.setAttribute('role', 'button');
@@ -869,9 +821,10 @@
                 wrap.style.left = `${cat.left}px`;
                 wrap.style.top = `${cat.top}px`;
                 wrap.style.setProperty('--top-cat-size', `${cat.size}px`);
-                wrap.style.setProperty('--float-duration', `${cat.duration}s`);
-                wrap.style.setProperty('--float-delay', `${cat.delay}s`);
-                wrap.style.setProperty('--tilt', `${cat.tilt}deg`);
+                wrap.style.setProperty('--float-duration', '4.8s');
+                wrap.style.animation = 'none';
+                wrap.style.setProperty('--float-delay', `${-0.6 * cats.indexOf(cat)}s`);
+                wrap.style.setProperty('--tilt', '0deg');
 
                 const img = document.createElement('img');
                 img.alt = '';
@@ -892,21 +845,15 @@
                     };
                     img.src = `/neko_icon/cat_${cat.type}_${face}.png`;
                 };
-                const randomFace = () => ['normal', 'happy', 'sad'][Math.floor(Math.random() * 3)];
-                const changeFace = () => {
-                    setFace(randomFace());
-                    faceTimer = setTimeout(changeFace, 4500 + Math.random() * 9000);
-                };
-                changeFace();
-
+                setFace('normal');
                 const feedTopCat = (x, y) => {
                     clearTimeout(faceTimer);
-                    setFace('happy'); // TOPでは魚をあげたら必ずニコニコ
+                    setFace('happy');
                     wrap.classList.remove('is-happy-pop');
                     void wrap.offsetWidth;
                     wrap.classList.add('is-happy-pop');
-                    createPopEffect(x, y, '🐟'); // 表示は +1 🐟 のみ。食べた数は表示しない
-                    faceTimer = setTimeout(changeFace, 1600);
+                    createPopEffect(x, y, '🐟');
+                    faceTimer = setTimeout(() => setFace('normal'), 1600);
                 };
 
                 wrap.addEventListener('pointerdown', e => {
@@ -919,44 +866,22 @@
                     dragging = false;
                     try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
                 });
-
                 wrap.addEventListener('pointermove', e => {
                     if (!pointerStart || !lastPointer) return;
-                    const dx = e.clientX - pointerStart.x;
-                    const dy = e.clientY - pointerStart.y;
+                    const dx = e.clientX - pointerStart.x, dy = e.clientY - pointerStart.y;
                     if (!dragging && Math.hypot(dx, dy) > 6) {
-                        dragging = true;
-                        wrap.classList.add('is-dragging');
+                        dragging = true; wrap.classList.add('is-dragging');
                     }
                     if (!dragging) return;
-
-                    const size = cat.size;
-                    let x = Math.max(4, Math.min(viewportW - size - 4, e.clientX - grabOffset.x));
-                    let y = Math.max(safeTop, Math.min(safeBottom - size, e.clientY - grabOffset.y));
-                    const proposed = { left: x, top: y, width: size, height: size };
-                    const lobbyBox = {
-                        left: lobbyRect.left - 3, top: lobbyRect.top - 3,
-                        width: lobbyRect.width + 6, height: lobbyRect.height + 6
-                    };
-                    const otherCats = Array.from(garden.querySelectorAll('.top-garden-cat'))
-                        .filter(el => el !== wrap)
-                        .map(el => {
-                            const r = el.getBoundingClientRect();
-                            return { left: r.left, top: r.top, width: r.width, height: r.height };
-                        });
-                    if (!intersects(proposed, lobbyBox, 0) && !otherCats.some(r => intersects(proposed, r, 8))) {
-                        wrap.style.left = `${x}px`;
-                        wrap.style.top = `${y}px`;
-                    }
+                    const x = Math.max(4, Math.min(viewportW - size - 4, e.clientX - grabOffset.x));
+                    const y = Math.max(safeTop, Math.min(viewportH - size - 8, e.clientY - grabOffset.y));
+                    wrap.style.left = `${x}px`; wrap.style.top = `${y}px`;
                     lastPointer = { x: e.clientX, y: e.clientY };
                 });
-
                 const finishPointer = e => {
                     if (!pointerStart) return;
                     const wasDragging = dragging;
-                    pointerStart = null;
-                    lastPointer = null;
-                    dragging = false;
+                    pointerStart = null; lastPointer = null; dragging = false;
                     wrap.classList.remove('is-dragging');
                     if (!wasDragging) feedTopCat(e.clientX, e.clientY);
                 };
@@ -967,8 +892,7 @@
                 });
                 wrap.addEventListener('keydown', e => {
                     if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        const r = wrap.getBoundingClientRect();
+                        e.preventDefault(); const r = wrap.getBoundingClientRect();
                         feedTopCat(r.left + r.width / 2, r.top + r.height / 2);
                     }
                 });
@@ -1728,6 +1652,13 @@
                 </div>`;
         });
 
+        modalCodeInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                modalCodeInput.blur(); // スマホの数字キーボードを閉じる
+            }
+        });
+
         modalCodeInput.addEventListener('input', async (e) => {
             const code = e.target.value.trim();
             verifiedAdminCode = '';
@@ -1926,7 +1857,7 @@
         document.getElementById('btnChangeName').addEventListener('click', async () => {
             const code = modalCodeInput.value.trim();
             const new_name = document.getElementById('modalNewName').value.trim() || '猫の散歩道';
-            if (new_name.length > 20) { alert('お部屋の名前は20文字以内にしてください。'); return; }
+            if (new_name.length > 20) { alert('広場の名前は20文字以内にしてください。'); return; }
             try {
                 const res = await fetch('/api/room_action', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1937,7 +1868,7 @@
                 document.getElementById('headerTitle').textContent = `🐾 ${new_name}`;
                 document.getElementById('modalNewName').value = '';
                 modal.classList.add('hidden');
-                showToast('お部屋の名前を変更しました');
+                showToast('広場の名前を変更しました');
             } catch (err) { alert(err.message || '通信に失敗しました'); }
         });
 
