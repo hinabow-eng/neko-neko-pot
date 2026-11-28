@@ -140,28 +140,7 @@
         .admin-section > summary::after { content: '＋'; float: right; color: #94a3b8; }
         .admin-section[open] > summary::after { content: '－'; }
         .admin-section-content { padding: 10px; border-top: 1px solid #e2e8f0; }
-        /* 設定項目を「にゅーん」と上下に伸縮させる */
-        @supports selector(details::details-content) {
-            .admin-section::details-content {
-                block-size: 0;
-                interpolate-size: allow-keywords;
-                overflow: clip;
-                transition: block-size .38s cubic-bezier(.2,.75,.25,1),
-                            content-visibility .38s allow-discrete;
-            }
-            .admin-section[open]::details-content { block-size: auto; }
-        }
-        /* 非対応ブラウザでは中身をやわらかく表示 */
-        @supports not selector(details::details-content) {
-            .admin-section[open] > .admin-section-content {
-                transform-origin: top center;
-                animation: adminSectionOpen .38s cubic-bezier(.2,.75,.25,1) both;
-            }
-            @keyframes adminSectionOpen {
-                from { opacity: 0; transform: translateY(-5px) scaleY(.94); }
-                to   { opacity: 1; transform: translateY(0) scaleY(1); }
-            }
-        }
+        /* 設定項目の「にゅーん」開閉は、ブラウザ差が出ないようJS（Web Animations API）で行う */
         .theme-edit-row { display: flex; align-items: center; gap: 7px; }
         .theme-edit-row input { flex: 1; min-width: 0; margin: 8px 0 !important; }
         .theme-edit-row button {
@@ -2180,7 +2159,70 @@
             }, 120);
         });
 
+        // 設定メニューの詳細を「にゅーん」と開閉する（開くときも閉じるときも）
+        function setupSmoothDetails() {
+            const DURATION = 380;
+            const EASING = 'cubic-bezier(.2,.75,.25,1)';
+            const reduceMotion = window.matchMedia &&
+                window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+            document.querySelectorAll('.admin-section').forEach(details => {
+                const summary = details.querySelector(':scope > summary');
+                const content = details.querySelector(':scope > .admin-section-content');
+                if (!summary || !content) return;
+                let anim = null;
+
+                const collapsed = {
+                    height: '0px', opacity: 0,
+                    paddingTop: '0px', paddingBottom: '0px', borderTopWidth: '0px'
+                };
+                const expandedFrom = el => {
+                    const cs = getComputedStyle(el);
+                    return {
+                        height: el.offsetHeight + 'px', opacity: 1,
+                        paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom,
+                        borderTopWidth: cs.borderTopWidth
+                    };
+                };
+
+                const run = (from, to, onDone) => {
+                    content.style.overflow = 'hidden';
+                    anim = content.animate([from, to], { duration: DURATION, easing: EASING });
+                    anim.onfinish = anim.oncancel = () => {
+                        anim = null;
+                        content.style.overflow = '';
+                        onDone();
+                    };
+                };
+
+                summary.addEventListener('click', e => {
+                    e.preventDefault();
+                    if (reduceMotion) { details.open = !details.open; return; }
+
+                    // アニメーション中にもう一度押したら、今の高さから逆向きに動かす
+                    const midway = anim ? expandedFrom(content) : null;
+                    if (anim) { anim.onfinish = anim.oncancel = null; anim.cancel(); anim = null; }
+
+                    if (!details.open || details.dataset.closing === '1') {
+                        // 開く
+                        delete details.dataset.closing;
+                        details.open = true;
+                        const target = expandedFrom(content);
+                        run(midway || collapsed, target, () => {});
+                    } else {
+                        // 閉じる
+                        details.dataset.closing = '1';
+                        run(midway || expandedFrom(content), collapsed, () => {
+                            details.open = false;
+                            delete details.dataset.closing;
+                        });
+                    }
+                });
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            setupSmoothDetails();
             // DOMができた時点でまず画面と猫を描画。画像のload完了は待たない。
             initTopCatGarden();
             init();
